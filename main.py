@@ -43,6 +43,11 @@ FPS = 60
 SUBSTEPS = 4
 DT = 1.0 / (FPS * SUBSTEPS)
 
+BARRIER_MIN = 0.10          # допустимый диапазон положения перегородки
+BARRIER_MAX = 0.90
+BARRIER_MAX_SPEED = 4.0     # макс. скорость стенки, в единицах поля в секунду
+BARRIER_RESPONSE = 40.0     # 1/с: насколько быстро стенка догоняет курсор
+
 
 # ============================================================
 # ПЕРЕВОД
@@ -50,6 +55,19 @@ DT = 1.0 / (FPS * SUBSTEPS)
 
 TEXT = {
     "ru": {
+        "barrier_scatter": "Рассеиватели",
+        "barrier_semi": "Полупроницаемая",
+        "scatter_shape": "Форма",
+        "shape_circle": "Круги",
+        "shape_ellipse": "Эллипсы",
+        "shape_triangle": "Треугольники",
+        "shape_mixed": "Смешанные",
+        "scatter_count": "Число в ряду",
+        "scatter_size": "Размер, px",
+        "scatter_columns": "Число рядов",
+        "scatter_angle": "Поворот, °",
+        "p_lr": "P слева → направо",
+        "p_rl": "P справа → налево",
         "window": "Лаборатория распределения Больцмана",
         "language": "Язык",
         "potential_group": "Потенциальная энергия",
@@ -68,7 +86,7 @@ TEXT = {
         "radius": "Радиус частицы, px",
         "temperature": "Температура T",
         "energy_scale": "Масштаб энергии",
-        "friction": "Трение γ",
+        # "friction": "Трение γ",
         "start": "Старт",
         "pause": "Пауза",
         "reset": "Распределить заново",
@@ -102,6 +120,19 @@ TEXT = {
         ),
     },
     "en": {
+        "barrier_scatter": "Scatterers",
+        "barrier_semi": "Semi-permeable",
+        "scatter_shape": "Shape",
+        "shape_circle": "Circles",
+        "shape_ellipse": "Ellipses",
+        "shape_triangle": "Triangles",
+        "shape_mixed": "Mixed",
+        "scatter_count": "Count per row",
+        "scatter_size": "Size, px",
+        "scatter_columns": "Rows",
+        "scatter_angle": "Rotation, °",
+        "p_lr": "P left → right",
+        "p_rl": "P right → left",
         "window": "Boltzmann Distribution Laboratory",
         "language": "Language",
         "potential_group": "Potential energy",
@@ -120,7 +151,7 @@ TEXT = {
         "radius": "Particle radius, px",
         "temperature": "Temperature T",
         "energy_scale": "Energy scale",
-        "friction": "Friction γ",
+        # "friction": "Friction γ",
         "start": "Start",
         "pause": "Pause",
         "reset": "Redistribute",
@@ -154,6 +185,189 @@ TEXT = {
         ),
     },
 }
+
+class Obstacle:
+    """
+    Выпуклое препятствие, жёстко привязанное к перегородке.
+    kind = "ellipse" (круг, если a == b) или "triangle".
+    Координаты dx, cy: смещение по x от перегородки и y в мировых единицах.
+    """
+
+    def __init__(self, kind, dx, cy, angle, a=0.0, b=0.0, radius=0.0):
+        self.kind = kind
+        self.dx = dx
+        self.cy = cy
+        self.cs = float(np.cos(angle))
+        self.sn = float(np.sin(angle))
+
+        if kind == "ellipse":
+            self.a = a
+            self.b = b
+            self.bound = max(a, b)
+        else:
+            t = angle + np.arange(3) * 2.0 * np.pi / 3.0
+            self.local = radius * np.column_stack((np.cos(t), np.sin(t)))
+            self.bound = radius
+
+    def center(self, bx):
+        return np.array([bx + self.dx, self.cy])
+
+    def distance(self, p, bx):
+        """Знаковое расстояние от центров частиц до поверхности и внешняя нормаль."""
+        c = self.center(bx)
+
+        if self.kind == "ellipse":
+            return self._ellipse_distance(p, c)
+
+        return self._polygon_distance(p, c + self.local)
+
+    def _ellipse_distance(self, p, c):
+        d = p - c
+        u = self.cs * d[:, 0] + self.sn * d[:, 1]
+        v = -self.sn * d[:, 0] + self.cs * d[:, 1]
+
+        f = np.maximum(np.sqrt((u / self.a) ** 2 + (v / self.b) ** 2), 1e-9)
+
+        gu = u / (self.a ** 2 * f)
+        gv = v / (self.b ** 2 * f)
+        g = np.sqrt(gu ** 2 + gv ** 2) + 1e-12
+
+        # Расстояние в первом порядке: (F - 1) / |grad F|.
+        dist = (f - 1.0) / g
+
+        nu = gu / g
+        nv = gv / g
+
+        normal = np.column_stack((
+            self.cs * nu - self.sn * nv,
+            self.sn * nu + self.cs * nv,
+        ))
+
+        return dist, normal
+
+    @staticmethod
+    def _polygon_distance(p, verts):
+        count = len(verts)
+
+        best = np.full(len(p), np.inf)
+        best_normal = np.zeros((len(p), 2))
+        best_edge_normal = np.zeros((len(p), 2))
+        inside = np.ones(len(p), dtype=bool)
+
+        for k in range(count):
+            a = verts[k]
+            b = verts[(k + 1) % count]
+
+            e = b - a
+            length2 = float(e @ e)
+            edge_normal = np.array([e[1], -e[0]]) / np.sqrt(length2)
+
+            t = np.clip(((p - a) @ e) / length2, 0.0, 1.0)
+            q = a + t[:, None] * e
+
+            diff = p - q
+            dist = np.linalg.norm(diff, axis=1)
+
+            inside &= ((p - a) @ edge_normal) <= 0.0
+
+            better = dist < best
+            best[better] = dist[better]
+            best_normal[better] = (
+                diff[better] / np.maximum(dist[better], 1e-12)[:, None]
+            )
+            best_edge_normal[better] = edge_normal
+
+        d = np.where(inside, -best, best)
+        n = np.where(inside[:, None], best_edge_normal, best_normal)
+
+        return d, n
+
+    def outline(self, bx, points=36):
+        """Контур для рисования (в мировых координатах)."""
+        c = self.center(bx)
+
+        if self.kind == "ellipse":
+            t = np.linspace(0.0, 2.0 * np.pi, points, endpoint=False)
+            lx = self.a * np.cos(t)
+            ly = self.b * np.sin(t)
+
+            return np.column_stack((
+                c[0] + self.cs * lx - self.sn * ly,
+                c[1] + self.sn * lx + self.cs * ly,
+            ))
+
+        return c + self.local
+
+class ParticleView(QLabel):
+    """QLabel, который позволяет мышью схватить и двигать перегородку."""
+
+    barrierMoved = pyqtSignal(float)   # новое положение в долях ширины поля
+
+    GRAB_PX = 8
+
+    def __init__(self):
+        super().__init__()
+        self.setMouseTracking(True)
+        self.barrier_fraction = None   # None — перегородки нет
+        self.dragging = False
+        self.grab_offset = 0.0
+
+    def _fraction(self, event):
+        pm = self.pixmap()
+
+        if pm is None or pm.isNull() or pm.width() == 0:
+            return None, 1
+
+        offset_x = (self.width() - pm.width()) / 2.0
+        fx = (event.position().x() - offset_x) / pm.width()
+
+        return fx, pm.width()
+
+    def _hit(self, fx, width_px):
+        if self.barrier_fraction is None or fx is None:
+            return False
+
+        return abs(fx - self.barrier_fraction) * width_px <= self.GRAB_PX
+
+    def mousePressEvent(self, event):
+        fx, w = self._fraction(event)
+
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._hit(fx, w)
+        ):
+            self.dragging = True
+            self.grab_offset = fx - self.barrier_fraction
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+            event.accept()
+            return
+
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        fx, w = self._fraction(event)
+
+        if self.dragging:
+            if fx is not None:
+                self.barrierMoved.emit(fx - self.grab_offset)
+            event.accept()
+            return
+
+        if self._hit(fx, w):
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        else:
+            self.unsetCursor()
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.dragging and event.button() == Qt.MouseButton.LeftButton:
+            self.dragging = False
+            self.unsetCursor()
+            event.accept()
+            return
+
+        super().mouseReleaseEvent(event)
 
 
 # ============================================================
@@ -374,14 +588,6 @@ class BoltzmannSimulation:
 
     Поэтому распределение по x является одномерным.
 
-    Динамика:
-        dx/dt = v
-        dv/dt = F - gamma*v + thermal noise
-
-    где
-        F = -dU/dx.
-
-    Используется схема типа BAOAB для Ланжевеновской динамики.
     """
 
     def __init__(self):
@@ -398,6 +604,22 @@ class BoltzmannSimulation:
 
         self.barrier_mode = 0
         self.barrier_fraction = 0.5
+
+        self.barrier_goal = 0.5        # куда стенку тянет мышь
+        self.barrier_velocity = 0.0    # скорость стенки по x
+
+        self.scatter_shape = 0         # 0 круги, 1 эллипсы, 2 треугольники, 3 смешанные
+        self.scatter_count = 3
+        self.scatter_size_px = 16
+        self.scatter_columns = 1
+        self.scatter_angle = 0.0       # градусы
+
+        self.p_lr = 0.5                # вероятность пройти слева направо
+        self.p_rl = 0.5                # вероятность пройти справа налево
+
+        self._obstacle_key = None
+        self._obstacles = []
+        
         self.pore_px = 26
 
         self.potential_defined = False
@@ -558,6 +780,8 @@ class BoltzmannSimulation:
             size=(self.n, 2),
         )
 
+        self.velocities -= np.mean(self.velocities, axis=0)
+
         self._apply_outer_walls()
 
         for _ in range(8):
@@ -618,6 +842,156 @@ class BoltzmannSimulation:
             for a, b in merged
         ]
 
+    def obstacles(self):
+        """Список препятствий. Пересобирается только при смене параметров."""
+        key = (
+            self.scatter_shape,
+            self.scatter_count,
+            self.scatter_size_px,
+            self.scatter_columns,
+            self.scatter_angle,
+        )
+
+        if key == self._obstacle_key:
+            return self._obstacles
+
+        n = self.scatter_count
+
+        # Чтобы соседние препятствия не слипались в сплошную стенку.
+        size = min(self.scatter_size_px / FIELD_HEIGHT, 0.25 / n)
+
+        angle = np.radians(self.scatter_angle)
+        columns = self.scatter_columns
+        pitch = 3.4 * size
+
+        result = []
+        k = 0
+
+        for c in range(columns):
+            dx = (c - (columns - 1) / 2.0) * pitch
+
+            if c % 2 == 0:
+                ys = [(i + 0.5) / n * WORLD_H for i in range(n)]
+            else:
+                # Сдвинутый ряд, как в доске Гальтона.
+                ys = [i / n * WORLD_H for i in range(n + 1)]
+
+            for cy in ys:
+                shape = self.scatter_shape if self.scatter_shape < 3 else k % 3
+                k += 1
+
+                if shape == 0:
+                    ob = Obstacle("ellipse", dx, cy, angle, a=size, b=size)
+                elif shape == 1:
+                    ob = Obstacle(
+                        "ellipse", dx, cy, angle,
+                        a=1.6 * size, b=0.7 * size,
+                    )
+                else:
+                    ob = Obstacle(
+                        "triangle", dx, cy, angle, radius=1.4 * size
+                    )
+
+                result.append(ob)
+
+        self._obstacle_key = key
+        self._obstacles = result
+
+        return result
+
+    def _collide_scatterers(self):
+        """
+        Упругое отражение от бесконечно тяжёлых препятствий,
+        движущихся вместе с перегородкой со скоростью w вдоль x.
+        В системе отсчёта препятствия нормальная компонента скорости
+        меняет знак: v' = v - 2 ((v - W) . n) n, где W = (w, 0).
+        """
+        bx = self.barrier_x
+        w = self.barrier_velocity
+        r = self.radius
+
+        pos = self.positions
+        vel = self.velocities
+
+        for ob in self.obstacles():
+            c = ob.center(bx)
+
+            near = np.flatnonzero(
+                np.sum((pos - c) ** 2, axis=1) < (ob.bound + r) ** 2
+            )
+
+            if len(near) == 0:
+                continue
+
+            d, normal = ob.distance(pos[near], bx)
+
+            hit = d < r
+
+            if not np.any(hit):
+                continue
+
+            idx = near[hit]
+            nh = normal[hit]
+
+            pos[idx] += nh * (r - d[hit])[:, None]
+
+            vn = (vel[idx, 0] - w) * nh[:, 0] + vel[idx, 1] * nh[:, 1]
+
+            approaching = vn < 0.0
+            j = idx[approaching]
+
+            vel[j] -= 2.0 * vn[approaching][:, None] * nh[approaching]
+
+    def _semipermeable_crossing(self, old_x, old_bx):
+        """
+        Каждое пересечение плоскости перегородки — случайное решение.
+        Прошла: скорость и положение не меняются.
+        Не прошла: отражение от стенки, v' = 2w - v.
+        """
+        bx = self.barrier_x
+        w = self.barrier_velocity
+
+        x = self.positions[:, 0]
+
+        left_to_right = (old_x < old_bx) & (x >= bx)
+        right_to_left = (old_x >= old_bx) & (x < bx)
+
+        hit = left_to_right | right_to_left
+
+        if not np.any(hit):
+            return
+
+        probability = np.where(left_to_right, self.p_lr, self.p_rl)
+        rejected = hit & (self.rng.random(self.n) >= probability)
+
+        for mask, side in (
+            (rejected & left_to_right, -1.0),
+            (rejected & right_to_left, +1.0),
+        ):
+            self.positions[mask, 0] = bx + side * 1e-6
+            self.velocities[mask, 0] = 2.0 * w - self.velocities[mask, 0]
+
+    def can_pass_array(self, y):
+        """Векторная версия particle_can_pass."""
+        y = np.asarray(y)
+
+        if self.barrier_mode == 0:
+            return np.ones(len(y), dtype=bool)
+
+        if self.barrier_mode == 1:
+            return np.zeros(len(y), dtype=bool)
+
+        result = np.zeros(len(y), dtype=bool)
+        r = self.radius
+
+        if self.pore_height <= 2.0 * r:
+            return result
+
+        for a, b in self.pore_intervals():
+            result |= (y - r >= a) & (y + r <= b)
+
+        return result
+
     def particle_can_pass(self, y):
         if self.barrier_mode == 0:
             return True
@@ -638,74 +1012,87 @@ class BoltzmannSimulation:
 
         return False
 
-    def _handle_barrier_crossing(self, old_x):
+    def _move_barrier(self, dt):
+        """Плавно двигает стенку к цели и запоминает её скорость."""
+        goal = float(np.clip(self.barrier_goal, BARRIER_MIN, BARRIER_MAX))
+
+        move = (goal - self.barrier_fraction) * WORLD_W
+        move *= min(1.0, dt * BARRIER_RESPONSE)
+
+        limit = BARRIER_MAX_SPEED * dt
+        move = float(np.clip(move, -limit, limit))
+
+        self.barrier_fraction += move / WORLD_W
+        self.barrier_velocity = move / dt
+
+    def _barrier_collision(self, old_x, old_bx):
+        """
+        Столкновение с бесконечно тяжёлой подвижной стенкой.
+
+        Сторону определяем по положению ДО шага, чтобы быстрая стенка
+        не могла «проскочить» сквозь частицу.
+
+        В системе отсчёта стенки нормальная компонента скорости
+        меняет знак: v' - w = -(v - w)  =>  v' = 2w - v.
+        """
         if self.barrier_mode == 0:
             return
 
+        if self.barrier_mode == 3:
+            self._collide_scatterers()
+            return
+
+        if self.barrier_mode == 4:
+            self._semipermeable_crossing(old_x, old_bx)
+            return
+
         bx = self.barrier_x
+        w = self.barrier_velocity
         r = self.radius
 
-        for i in range(self.n):
-            previous = old_x[i]
-            current = self.positions[i, 0]
+        blocked = ~self.can_pass_array(self.positions[:, 1])
 
-            crossed_left_to_right = (
-                previous < bx
-                and current >= bx
-            )
+        x = self.positions[:, 0]
+        v = self.velocities[:, 0]
 
-            crossed_right_to_left = (
-                previous > bx
-                and current <= bx
-            )
+        left = blocked & (old_x < old_bx)
+        right = blocked & (old_x >= old_bx)
 
-            if not (
-                crossed_left_to_right
-                or crossed_right_to_left
-            ):
-                continue
+        hit = left & (x > bx - r)
+        self.positions[hit, 0] = bx - r
+        bounce = hit & (v > w)
+        self.velocities[bounce, 0] = 2.0 * w - self.velocities[bounce, 0]
 
-            if self.particle_can_pass(
-                self.positions[i, 1]
-            ):
-                continue
-
-            if crossed_left_to_right:
-                self.positions[i, 0] = bx - r
-                self.velocities[i, 0] = -abs(
-                    self.velocities[i, 0]
-                )
-
-            else:
-                self.positions[i, 0] = bx + r
-                self.velocities[i, 0] = abs(
-                    self.velocities[i, 0]
-                )
+        hit = right & (x < bx + r)
+        self.positions[hit, 0] = bx + r
+        bounce = hit & (v < w)
+        self.velocities[bounce, 0] = 2.0 * w - self.velocities[bounce, 0]
 
     def _enforce_barrier(self):
-        if self.barrier_mode == 0:
+        """Страховка после столкновений частиц друг с другом."""
+        if self.barrier_mode in (0, 3, 4):
             return
 
         bx = self.barrier_x
+        w = self.barrier_velocity
         r = self.radius
 
-        for i in range(self.n):
-            x, y = self.positions[i]
+        blocked = ~self.can_pass_array(self.positions[:, 1])
 
-            if self.particle_can_pass(y):
-                continue
+        x = self.positions[:, 0]
+        v = self.velocities[:, 0]
 
-            if abs(x - bx) < r:
-                if x < bx:
-                    self.positions[i, 0] = bx - r
-                    self.velocities[i, 0] = -abs(
-                        self.velocities[i, 0]
-                    )
-                else:
-                    self.positions[i, 0] = bx + r
-                    self.velocities[i, 0] = abs(
-                        self.velocities[i, 0]
-                    )
+        near = blocked & (np.abs(x - bx) < r)
+
+        left = near & (x < bx)
+        self.positions[left, 0] = bx - r
+        bounce = left & (v > w)
+        self.velocities[bounce, 0] = 2.0 * w - self.velocities[bounce, 0]
+
+        right = near & (x >= bx)
+        self.positions[right, 0] = bx + r
+        bounce = right & (v < w)
+        self.velocities[bounce, 0] = 2.0 * w - self.velocities[bounce, 0]
 
     # --------------------------------------------------------
     # Стенки
@@ -870,68 +1257,26 @@ class BoltzmannSimulation:
     # Ланжевеновская динамика
     # --------------------------------------------------------
 
-    def _drift(self, half_dt):
-        old_x = self.positions[:, 0].copy()
-
-        self.positions += (
-            self.velocities * half_dt
-        )
-
-        self._apply_outer_walls()
-        self._handle_barrier_crossing(old_x)
-
     def step(self, dt):
         if not self.potential_defined:
             return
 
-        # B: половина действия силы
-        force = self.force_x(
-            self.positions[:, 0]
-        )
+        old_bx = self.barrier_x
+        self._move_barrier(dt)
 
-        self.velocities[:, 0] += (
-            0.5 * dt * force
-        )
+        force = self.force_x(self.positions[:, 0])
+        self.velocities[:, 0] += 0.5 * dt * force
 
-        # A: половина перемещения
-        self._drift(0.5 * dt)
+        old_x = self.positions[:, 0].copy()
+        self.positions += self.velocities * dt
 
-        # O: точный шаг Орнштейна-Уленбека
-        gamma = max(self.gamma, 0.0)
+        self._apply_outer_walls()
+        self._barrier_collision(old_x, old_bx)
 
-        c = np.exp(-gamma * dt)
+        force_new = self.force_x(self.positions[:, 0])
+        self.velocities[:, 0] += 0.5 * dt * force_new
 
-        T = max(self.temperature, 1e-8)
-
-        sigma = np.sqrt(
-            T * max(0.0, 1.0 - c * c)
-        )
-
-        noise = self.rng.normal(
-            0.0,
-            1.0,
-            size=self.velocities.shape,
-        )
-
-        self.velocities = (
-            c * self.velocities
-            + sigma * noise
-        )
-
-        # A
-        self._drift(0.5 * dt)
-
-        # Столкновения
         self._resolve_collisions()
-
-        # B
-        force = self.force_x(
-            self.positions[:, 0]
-        )
-
-        self.velocities[:, 0] += (
-            0.5 * dt * force
-        )
 
     # --------------------------------------------------------
     # Статистика
@@ -991,16 +1336,27 @@ class BoltzmannSimulation:
         # Если перегородка сплошная, число частиц
         # с каждой стороны сохраняется.
         # Поэтому нормируем теорию отдельно по двум областям.
-        if self.barrier_mode == 1:
+        if self.barrier_mode in (1, 4):
             barrier = self.barrier_fraction
 
             left_mask = centers < barrier
             right_mask = ~left_mask
 
-            current_left = np.mean(
-                self.positions[:, 0]
-                < self.barrier_x
+            current_left = float(
+                np.mean(self.positions[:, 0] < self.barrier_x)
             )
+
+            if self.barrier_mode == 4:
+                # Стационарное состояние: потоки через стенку равны,
+                # N_L p_LR / Z_L = N_R p_RL / Z_R.
+                zl = float(np.sum(weights[left_mask]))
+                zr = float(np.sum(weights[right_mask]))
+
+                a = self.p_rl * zl
+                b = self.p_lr * zr
+
+                if a + b > 0.0:
+                    current_left = a / (a + b)
 
             current_right = 1.0 - current_left
 
@@ -1064,6 +1420,14 @@ class BoltzmannSimulation:
             -np.sum(p * np.log(p))
         )
 
+    def effective_temperature(self):
+        if self.n == 0:
+            return 0.0
+    
+        v2 = np.sum(self.velocities**2, axis=0)
+
+        return float(np.mean(v2))
+
 
 # ============================================================
 # ГЛАВНОЕ ОКНО
@@ -1102,6 +1466,16 @@ class MainWindow(QMainWindow):
 
         self.resize(1280, 900)
         self.setMinimumSize(950, 650)
+
+    def barrier_dragged(self, fraction):
+        fraction = float(np.clip(fraction, BARRIER_MIN, BARRIER_MAX))
+
+        self.sim.barrier_goal = fraction
+
+        # Синхронизируем спинбокс без повторного вызова parameters_changed.
+        self.barrier_position_spin.blockSignals(True)
+        self.barrier_position_spin.setValue(fraction)
+        self.barrier_position_spin.blockSignals(False)
 
     # ========================================================
     # UI
@@ -1228,17 +1602,10 @@ class MainWindow(QMainWindow):
         self.energy_spin.setSingleStep(0.25)
         self.energy_spin.setValue(5.0)
 
-        self.friction_spin = QDoubleSpinBox()
-        self.friction_spin.setRange(0.10, 8.0)
-        self.friction_spin.setDecimals(2)
-        self.friction_spin.setSingleStep(0.1)
-        self.friction_spin.setValue(2.0)
-
         self.particles_label = QLabel()
         self.radius_label = QLabel()
         self.temperature_label = QLabel()
         self.energy_label = QLabel()
-        self.friction_label = QLabel()
 
         simulation_form.addRow(
             self.particles_label,
@@ -1260,11 +1627,6 @@ class MainWindow(QMainWindow):
             self.energy_spin,
         )
 
-        simulation_form.addRow(
-            self.friction_label,
-            self.friction_spin,
-        )
-
         simulation_layout.addLayout(simulation_form)
 
         self.controls_layout.addWidget(
@@ -1283,7 +1645,7 @@ class MainWindow(QMainWindow):
 
         self.barrier_combo = QComboBox()
         self.barrier_combo.addItems(
-            ["", "", ""]
+            ["", "", "", "", ""]
         )
 
         self.barrier_position_spin = (
@@ -1294,9 +1656,9 @@ class MainWindow(QMainWindow):
             0.10,
             0.90,
         )
-        self.barrier_position_spin.setDecimals(2)
+        self.barrier_position_spin.setDecimals(3)
         self.barrier_position_spin.setSingleStep(
-            0.05
+            0.001
         )
         self.barrier_position_spin.setValue(0.50)
 
@@ -1307,6 +1669,56 @@ class MainWindow(QMainWindow):
         self.barrier_type_label = QLabel()
         self.barrier_x_label = QLabel()
         self.pore_label = QLabel()
+
+        self.scatter_shape_combo = QComboBox()
+        self.scatter_shape_combo.addItems(["", "", "", ""])
+
+        self.scatter_count_spin = QSpinBox()
+        self.scatter_count_spin.setRange(1, 8)
+        self.scatter_count_spin.setValue(3)
+
+        self.scatter_size_spin = QSpinBox()
+        self.scatter_size_spin.setRange(4, 40)
+        self.scatter_size_spin.setValue(16)
+
+        self.scatter_columns_spin = QSpinBox()
+        self.scatter_columns_spin.setRange(1, 3)
+        self.scatter_columns_spin.setValue(1)
+
+        self.scatter_angle_spin = QSpinBox()
+        self.scatter_angle_spin.setRange(0, 359)
+        self.scatter_angle_spin.setSingleStep(15)
+        self.scatter_angle_spin.setWrapping(True)
+
+        self.p_lr_spin = QDoubleSpinBox()
+        self.p_rl_spin = QDoubleSpinBox()
+
+        for spin in (self.p_lr_spin, self.p_rl_spin):
+            spin.setRange(0.0, 1.0)
+            spin.setDecimals(2)
+            spin.setSingleStep(0.05)
+            spin.setValue(0.50)
+
+        self.scatter_shape_label = QLabel()
+        self.scatter_count_label = QLabel()
+        self.scatter_size_label = QLabel()
+        self.scatter_columns_label = QLabel()
+        self.scatter_angle_label = QLabel()
+        self.p_lr_label = QLabel()
+        self.p_rl_label = QLabel()
+
+        self.scatter_widgets = [
+            self.scatter_shape_label, self.scatter_shape_combo,
+            self.scatter_count_label, self.scatter_count_spin,
+            self.scatter_size_label, self.scatter_size_spin,
+            self.scatter_columns_label, self.scatter_columns_spin,
+            self.scatter_angle_label, self.scatter_angle_spin,
+        ]
+
+        self.semi_widgets = [
+            self.p_lr_label, self.p_lr_spin,
+            self.p_rl_label, self.p_rl_spin,
+        ]
 
         barrier_form.addRow(
             self.barrier_type_label,
@@ -1322,6 +1734,14 @@ class MainWindow(QMainWindow):
             self.pore_label,
             self.pore_spin,
         )
+
+        barrier_form.addRow(self.scatter_shape_label, self.scatter_shape_combo)
+        barrier_form.addRow(self.scatter_count_label, self.scatter_count_spin)
+        barrier_form.addRow(self.scatter_size_label, self.scatter_size_spin)
+        barrier_form.addRow(self.scatter_columns_label, self.scatter_columns_spin)
+        barrier_form.addRow(self.scatter_angle_label, self.scatter_angle_spin)
+        barrier_form.addRow(self.p_lr_label, self.p_lr_spin)
+        barrier_form.addRow(self.p_rl_label, self.p_rl_spin)
 
         self.controls_layout.addWidget(
             self.barrier_group
@@ -1386,7 +1806,7 @@ class MainWindow(QMainWindow):
             self.particle_title
         )
 
-        self.particle_view = QLabel()
+        self.particle_view = ParticleView()
         self.particle_view.setAlignment(
             Qt.AlignmentFlag.AlignCenter
         )
@@ -1534,6 +1954,10 @@ class MainWindow(QMainWindow):
     # ========================================================
 
     def _connect_signals(self):
+        self.particle_view.barrierMoved.connect(
+            self.barrier_dragged
+        )
+    
         self.language_combo.currentIndexChanged.connect(
             self.language_changed
         )
@@ -1578,10 +2002,6 @@ class MainWindow(QMainWindow):
             self.parameters_changed
         )
 
-        self.friction_spin.valueChanged.connect(
-            self.parameters_changed
-        )
-
         self.barrier_combo.currentIndexChanged.connect(
             self.parameters_changed
         )
@@ -1593,6 +2013,14 @@ class MainWindow(QMainWindow):
         self.pore_spin.valueChanged.connect(
             self.parameters_changed
         )
+
+        self.scatter_shape_combo.currentIndexChanged.connect(self.parameters_changed)
+        self.scatter_count_spin.valueChanged.connect(self.parameters_changed)
+        self.scatter_size_spin.valueChanged.connect(self.parameters_changed)
+        self.scatter_columns_spin.valueChanged.connect(self.parameters_changed)
+        self.scatter_angle_spin.valueChanged.connect(self.parameters_changed)
+        self.p_lr_spin.valueChanged.connect(self.parameters_changed)
+        self.p_rl_spin.valueChanged.connect(self.parameters_changed)
 
     # ========================================================
     # ПЕРЕВОД
@@ -1679,10 +2107,6 @@ class MainWindow(QMainWindow):
             self.tr("energy_scale")
         )
 
-        self.friction_label.setText(
-            self.tr("friction")
-        )
-
         self.reset_button.setText(
             self.tr("reset")
         )
@@ -1707,6 +2131,8 @@ class MainWindow(QMainWindow):
             self.tr("barrier_none"),
             self.tr("barrier_solid"),
             self.tr("barrier_porous"),
+            self.tr("barrier_scatter"),
+            self.tr("barrier_semi"),
         ]
 
         for i, name in enumerate(barrier_names):
@@ -1760,9 +2186,31 @@ class MainWindow(QMainWindow):
             self.tr("theoretical"),
         )
 
+        shape_names = [
+            self.tr("shape_circle"),
+            self.tr("shape_ellipse"),
+            self.tr("shape_triangle"),
+            self.tr("shape_mixed"),
+        ]
+
+        for i, name in enumerate(shape_names):
+            self.scatter_shape_combo.setItemText(i, name)
+
+        self.scatter_shape_label.setText(self.tr("scatter_shape"))
+        self.scatter_count_label.setText(self.tr("scatter_count"))
+        self.scatter_size_label.setText(self.tr("scatter_size"))
+        self.scatter_columns_label.setText(self.tr("scatter_columns"))
+        self.scatter_angle_label.setText(self.tr("scatter_angle"))
+        self.p_lr_label.setText(self.tr("p_lr"))
+        self.p_rl_label.setText(self.tr("p_rl"))
+
+        self.update_barrier_controls()
+
         self.update_start_button()
         self.update_status()
         self.update_statistics()
+
+
 
     # ========================================================
     # ПОТЕНЦИАЛ
@@ -1905,21 +2353,27 @@ class MainWindow(QMainWindow):
             self.energy_spin.value()
         )
 
-        self.sim.gamma = (
-            self.friction_spin.value()
-        )
-
         self.sim.barrier_mode = (
             self.barrier_combo.currentIndex()
         )
 
-        self.sim.barrier_fraction = (
+        self.sim.barrier_goal = (
             self.barrier_position_spin.value()
         )
 
         self.sim.pore_px = (
             self.pore_spin.value()
         )
+
+        self.sim.scatter_shape = self.scatter_shape_combo.currentIndex()
+        self.sim.scatter_count = self.scatter_count_spin.value()
+        self.sim.scatter_size_px = self.scatter_size_spin.value()
+        self.sim.scatter_columns = self.scatter_columns_spin.value()
+        self.sim.scatter_angle = float(self.scatter_angle_spin.value())
+        self.sim.p_lr = self.p_lr_spin.value()
+        self.sim.p_rl = self.p_rl_spin.value()
+
+        self.update_barrier_controls()
 
         self.update_distribution()
 
@@ -2001,18 +2455,26 @@ class MainWindow(QMainWindow):
     # ========================================================
 
     def animation_frame(self):
-        if (
-            self.running
-            and self.potential_defined
-        ):
+        if self.running and self.potential_defined:
             for _ in range(SUBSTEPS):
                 self.sim.step(DT)
+        else:
+            # Пауза: перегородку можно двигать, но частицы стоят.
+            self.sim.barrier_fraction = float(
+                np.clip(self.sim.barrier_goal, BARRIER_MIN, BARRIER_MAX)
+            )
+            self.sim.barrier_velocity = 0.0
+
+        self.particle_view.barrier_fraction = (
+            self.sim.barrier_fraction
+            if self.sim.barrier_mode != 0
+            else None
+        )
 
         self.render_particle_field()
 
         self.frame_counter += 1
 
-        # Графики необязательно обновлять 60 раз в секунду.
         if self.frame_counter % 5 == 0:
             self.update_distribution()
             self.update_statistics()
@@ -2116,18 +2578,15 @@ class MainWindow(QMainWindow):
         # ----------------------------------------------------
 
         if self.sim.barrier_mode != 0:
+            mode = self.sim.barrier_mode
+
             bx = int(
-                self.sim.barrier_fraction
-                * FIELD_WIDTH
+                self.sim.barrier_fraction * FIELD_WIDTH
             )
 
-            barrier_color = (
-                248,
-                113,
-                113,
-            )
+            barrier_color = (248, 113, 113)
 
-            if self.sim.barrier_mode == 1:
+            if mode == 1:
                 pygame.draw.line(
                     surface,
                     barrier_color,
@@ -2136,16 +2595,11 @@ class MainWindow(QMainWindow):
                     5,
                 )
 
-            else:
-                intervals = (
-                    self.sim.pore_intervals()
-                )
+            elif mode == 2:
+                intervals = self.sim.pore_intervals()
 
                 pixel_intervals = [
-                    (
-                        int(a * FIELD_HEIGHT),
-                        int(b * FIELD_HEIGHT),
-                    )
+                    (int(a * FIELD_HEIGHT), int(b * FIELD_HEIGHT))
                     for a, b in intervals
                 ]
 
@@ -2154,26 +2608,23 @@ class MainWindow(QMainWindow):
                 for a, b in pixel_intervals:
                     if a > current:
                         pygame.draw.line(
-                            surface,
-                            barrier_color,
-                            (bx, current),
-                            (bx, a),
-                            5,
+                            surface, barrier_color,
+                            (bx, current), (bx, a), 5,
                         )
 
-                    current = max(
-                        current,
-                        b,
-                    )
+                    current = max(current, b)
 
                 if current < FIELD_HEIGHT:
                     pygame.draw.line(
-                        surface,
-                        barrier_color,
-                        (bx, current),
-                        (bx, FIELD_HEIGHT),
-                        5,
+                        surface, barrier_color,
+                        (bx, current), (bx, FIELD_HEIGHT), 5,
                     )
+
+            elif mode == 3:
+                self._draw_obstacles(surface, bx)
+
+            else:
+                self._draw_semipermeable(surface, bx)
 
         # ----------------------------------------------------
         # Центр масс
@@ -2373,6 +2824,7 @@ class MainWindow(QMainWindow):
     def update_statistics(self):
         com = self.sim.center_of_mass()
         entropy = self.sim.entropy()
+        temp = self.sim.effective_temperature()
 
         if self.sim.n > 0:
             left = int(
@@ -2391,6 +2843,7 @@ class MainWindow(QMainWindow):
             f"x/L = {com:.3f}     |     "
             f"{self.tr('entropy')}: "
             f"S = {entropy:.4f}  (kB = 1)     |     "
+            f"T = {temp:.4f}     |     "
             f"{self.tr('left_particles')}: "
             f"{left}     |     "
             f"{self.tr('right_particles')}: "
@@ -2408,6 +2861,64 @@ class MainWindow(QMainWindow):
         pygame.quit()
 
         event.accept()
+
+    def _draw_obstacles(self, surface, bx):
+        # Тонкая направляющая: за неё удобно хватать перегородку.
+        pygame.draw.line(
+            surface, (90, 60, 70), (bx, 0), (bx, FIELD_HEIGHT), 1
+        )
+
+        scale = FIELD_HEIGHT / WORLD_H
+
+        for ob in self.sim.obstacles():
+            points = [
+                (int(x * scale), int(y * scale))
+                for x, y in ob.outline(self.sim.barrier_x)
+            ]
+
+            pygame.draw.polygon(surface, (120, 50, 60), points)
+            pygame.draw.polygon(surface, (248, 113, 113), points, 2)
+
+    def _draw_semipermeable(self, surface, bx):
+        base = (167, 139, 250)
+
+        for y in range(0, FIELD_HEIGHT, 14):
+            pygame.draw.line(
+                surface, base,
+                (bx, y), (bx, min(y + 8, FIELD_HEIGHT)), 4,
+            )
+
+        def shade(p):
+            return tuple(int(40 + (c - 40) * p) for c in base)
+
+        # Стрелки: яркость пропорциональна вероятности прохода.
+        for fy in (0.2, 0.5, 0.8):
+            y = int(fy * FIELD_HEIGHT)
+
+            pygame.draw.polygon(
+                surface, shade(self.sim.p_lr),
+                [(bx - 20, y - 7), (bx - 20, y + 7), (bx - 8, y)],
+            )
+
+            pygame.draw.polygon(
+                surface, shade(self.sim.p_rl),
+                [(bx + 20, y - 7), (bx + 20, y + 7), (bx + 8, y)],
+            )
+
+    def update_barrier_controls(self):
+        mode = self.barrier_combo.currentIndex()
+
+        self.barrier_x_label.setVisible(mode != 0)
+        self.barrier_position_spin.setVisible(mode != 0)
+
+        self.pore_label.setVisible(mode == 2)
+        self.pore_spin.setVisible(mode == 2)
+
+        for widget in self.scatter_widgets:
+            widget.setVisible(mode == 3)
+
+        for widget in self.semi_widgets:
+            widget.setVisible(mode == 4)
 
 
 # ============================================================
