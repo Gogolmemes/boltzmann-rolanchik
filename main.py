@@ -1,7 +1,32 @@
+import os
 import sys
+
+# Кеш Numba в пользовательскую папку: работает и в exe,
+# и когда папка программы доступна только для чтения.
+os.environ.setdefault(
+    "NUMBA_CACHE_DIR",
+    os.path.join(
+        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+        "Boltzmann",
+        "numba_cache",
+    ),
+)
+
 import numpy as np
 import pygame
 import pyqtgraph as pg
+
+try:
+    from numba import njit
+    NUMBA_OK = True
+except Exception:
+    NUMBA_OK = False
+
+    def njit(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
@@ -318,6 +343,85 @@ BARRIER_RESPONSE = 40.0     # 1/с: насколько быстро стенка
 DEMON_COLORS = [(239, 68, 68), (34, 197, 94), (59, 130, 246)]
 DEMON_HEX = ["#ef4444", "#22c55e", "#3b82f6"]
 
+@njit(cache=True)
+def collide_numba(pos, vel, radius, world_w, world_h):
+    """
+    Упругие столкновения одинаковых дисков.
+    Сетка на связных списках, без выделения памяти внутри цикла по парам.
+    Меняет pos и vel на месте.
+    """
+    n = pos.shape[0]
+    d = 2.0 * radius
+    d2 = d * d
+    cell = d * 1.05
+
+    nx = int(world_w / cell) + 3
+    ny = int(world_h / cell) + 3
+
+    head = np.full(nx * ny, -1, np.int64)
+    nxt = np.full(n, -1, np.int64)
+    cxs = np.empty(n, np.int64)
+    cys = np.empty(n, np.int64)
+
+    for i in range(n):
+        cx = min(max(int(pos[i, 0] / cell), 0), nx - 1)
+        cy = min(max(int(pos[i, 1] / cell), 0), ny - 1)
+        cxs[i] = cx
+        cys[i] = cy
+        c = cy * nx + cx
+        nxt[i] = head[c]
+        head[c] = i
+
+    for i in range(n):
+        for oy in range(-1, 2):
+            for ox in range(-1, 2):
+                x2 = cxs[i] + ox
+                y2 = cys[i] + oy
+
+                if x2 < 0 or y2 < 0 or x2 >= nx or y2 >= ny:
+                    continue
+
+                j = head[y2 * nx + x2]
+
+                while j != -1:
+                    if j > i:
+                        dx = pos[j, 0] - pos[i, 0]
+                        dy = pos[j, 1] - pos[i, 1]
+                        dist2 = dx * dx + dy * dy
+
+                        if 1e-16 < dist2 < d2:
+                            dist = np.sqrt(dist2)
+                            nxn = dx / dist
+                            nyn = dy / dist
+                            half = 0.5 * (d - dist)
+
+                            pos[i, 0] -= nxn * half
+                            pos[i, 1] -= nyn * half
+                            pos[j, 0] += nxn * half
+                            pos[j, 1] += nyn * half
+
+                            rel = (
+                                (vel[j, 0] - vel[i, 0]) * nxn
+                                + (vel[j, 1] - vel[i, 1]) * nyn
+                            )
+
+                            if rel < 0.0:
+                                vel[i, 0] += rel * nxn
+                                vel[i, 1] += rel * nyn
+                                vel[j, 0] -= rel * nxn
+                                vel[j, 1] -= rel * nyn
+
+                    j = nxt[j]
+
+
+def warmup_numba():
+    """Компиляция ядра на крошечном массиве (вызывается при старте)."""
+    if not NUMBA_OK:
+        return
+
+    pos = np.random.rand(8, 2)
+    vel = np.random.randn(8, 2)
+    collide_numba(pos, vel, 0.01, 3.2, 1.0)
 
 # ============================================================
 # ПЕРЕВОД
@@ -1600,6 +1704,30 @@ class BoltzmannSimulation:
     # --------------------------------------------------------
 
     def _resolve_collisions(self):
+        if self.n <= 1 or self.radius <= 0:
+            return
+
+        pos = self.positions
+        vel = self.velocities
+
+        use_numba = (
+            NUMBA_OK
+            and pos.dtype == np.float64
+            and vel.dtype == np.float64
+            and pos.flags.c_contiguous
+            and vel.flags.c_contiguous
+        )
+
+        if not use_numba:
+            self._resolve_collisions_python()
+            return
+
+        collide_numba(pos, vel, self.radius, WORLD_W, WORLD_H)
+
+        self._apply_outer_walls()
+        self._enforce_barrier()
+
+    def _resolve_collisions_python(self):
         """
         Упругие столкновения одинаковых круглых частиц.
 
@@ -1917,6 +2045,7 @@ class MainWindow(QMainWindow):
         self.potential_defined = False
 
         self._last_queue_len = 0
+        self._bg_surface = None
         self.frame_counter = 0
 
         # Pygame используется как off-screen renderer.
@@ -2849,6 +2978,7 @@ class MainWindow(QMainWindow):
     # ========================================================
 
     def new_potential(self):
+        self._bg_surface = None
         self.running = False
         self.potential_defined = False
 
@@ -2867,6 +2997,7 @@ class MainWindow(QMainWindow):
         self.update_status()
 
     def clear_potential(self):
+        self._bg_surface = None
         self.running = False
         self.potential_defined = False
 
@@ -2957,7 +3088,7 @@ class MainWindow(QMainWindow):
         Благодаря этому видно, как старое распределение постепенно
         перестраивается в новое.
         """
-
+        self._bg_surface = None
         self.sim.set_potential(potential)
 
         self.potential_defined = True
@@ -3187,53 +3318,10 @@ class MainWindow(QMainWindow):
         # ----------------------------------------------------
 
         if self.potential_defined:
-            strips = 150
+            if self._bg_surface is None:
+                self._bg_surface = self._build_background()
 
-            for i in range(strips):
-                x0 = int(
-                    i * FIELD_WIDTH / strips
-                )
-
-                x1 = int(
-                    (i + 1)
-                    * FIELD_WIDTH
-                    / strips
-                )
-
-                s = (
-                    i + 0.5
-                ) / strips
-
-                u = np.interp(
-                    s,
-                    np.linspace(
-                        0.0,
-                        1.0,
-                        POTENTIAL_POINTS,
-                    ),
-                    self.sim.potential,
-                )
-
-                u = float(
-                    np.clip(u, 0.0, 1.0)
-                )
-
-                color = (
-                    int(8 + 50 * u),
-                    int(18 + 12 * u),
-                    int(45 + 35 * (1.0 - u)),
-                )
-
-                pygame.draw.rect(
-                    surface,
-                    color,
-                    (
-                        x0,
-                        0,
-                        max(1, x1 - x0),
-                        FIELD_HEIGHT,
-                    ),
-                )
+            surface.blit(self._bg_surface, (0, 0))
 
         # ----------------------------------------------------
         # Сетка
@@ -3344,79 +3432,31 @@ class MainWindow(QMainWindow):
         # Частицы
         # ----------------------------------------------------
 
-        T = max(
-            self.sim.temperature,
-            1e-6,
-        )
+        sim = self.sim
 
-        reference_speed = (
-            3.0 * np.sqrt(T)
-        )
+        T = max(sim.temperature, 1e-6)
+        reference_speed = 3.0 * np.sqrt(T)
 
-        speeds = np.linalg.norm(
-            self.sim.velocities,
-            axis=1,
-        )
+        pxs = (sim.positions[:, 0] * (FIELD_WIDTH / WORLD_W)).astype(int).tolist()
+        pys = (sim.positions[:, 1] * (FIELD_HEIGHT / WORLD_H)).astype(int).tolist()
 
-        for i in range(self.sim.n):
-            px = int(
-                self.sim.positions[i, 0]
-                / WORLD_W
-                * FIELD_WIDTH
-            )
+        if sim.demon_mode and len(sim.colors) == sim.n:
+            colors = [DEMON_COLORS[c] for c in sim.colors.tolist()]
+        else:
+            speeds = np.linalg.norm(sim.velocities, axis=1)
+            ratio = np.clip(speeds / reference_speed, 0.0, 1.0)
 
-            py = int(
-                self.sim.positions[i, 1]
-                / WORLD_H
-                * FIELD_HEIGHT
-            )
+            red = (60 + 195 * ratio).astype(int)
+            green = np.minimum(255, (180 + 60 * ratio).astype(int))
+            blue = np.maximum(0, (255 - 190 * ratio).astype(int))
 
-            ratio = float(
-                np.clip(
-                    speeds[i]
-                    / reference_speed,
-                    0.0,
-                    1.0,
-                )
-            )
+            colors = list(zip(red.tolist(), green.tolist(), blue.tolist()))
 
-            # Медленные — голубые,
-            # быстрые — жёлто-красные.
-            red = int(
-                60 + 195 * ratio
-            )
+        radius_px = sim.radius_px
 
-            green = int(
-                180 + 60 * ratio
-            )
-
-            blue = int(
-                255 - 190 * ratio
-            )
-
-            color = (
-                red,
-                min(255, green),
-                max(0, blue),
-            )
-
-            if self.sim.demon_mode:
-                color = DEMON_COLORS[int(self.sim.colors[i])]
-
-            pygame.draw.circle(
-                surface,
-                color,
-                (px, py),
-                self.sim.radius_px,
-            )
-
-            pygame.draw.circle(
-                surface,
-                (235, 245, 255),
-                (px, py),
-                self.sim.radius_px,
-                1,
-            )
+        for px, py, color in zip(pxs, pys, colors):
+            pygame.draw.circle(surface, color, (px, py), radius_px)
+            pygame.draw.circle(surface, (235, 245, 255), (px, py), radius_px, 1)
 
         if self.sim.demon_mode and self.sim.demon_queue:
             i = self.sim.demon_queue[0]
@@ -3679,6 +3719,38 @@ class MainWindow(QMainWindow):
             self.demon_label.setText(self.tr("demon_idle"))
 
         self.update_status()
+
+    def _build_background(self):
+        bg = pygame.Surface((FIELD_WIDTH, FIELD_HEIGHT))
+        bg.fill((5, 10, 22))
+
+        strips = 150
+
+        s = (np.arange(strips) + 0.5) / strips
+
+        u = np.interp(
+            s,
+            np.linspace(0.0, 1.0, POTENTIAL_POINTS),
+            self.sim.potential,
+        )
+        u = np.clip(u, 0.0, 1.0)
+
+        for i in range(strips):
+            x0 = int(i * FIELD_WIDTH / strips)
+            x1 = int((i + 1) * FIELD_WIDTH / strips)
+            ui = float(u[i])
+
+            color = (
+                int(8 + 50 * ui),
+                int(18 + 12 * ui),
+                int(45 + 35 * (1.0 - ui)),
+            )
+
+            pygame.draw.rect(
+                bg, color, (x0, 0, max(1, x1 - x0), FIELD_HEIGHT)
+            )
+
+        return bg
 
 
 class InfoPage(QWidget):
@@ -3947,6 +4019,8 @@ def main():
         }
         """
     )
+
+    warmup_numba()
 
     window = AppWindow()
     window.show()
