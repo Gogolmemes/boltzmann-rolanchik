@@ -29,8 +29,267 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QVBoxLayout,
     QWidget,
-    QCheckBox
+    QCheckBox,
+    QStackedWidget,
+    QTextBrowser,
 )
+
+
+MENU_TEXT = {
+    "ru": {
+        "title": "Лаборатория распределения Больцмана",
+        "subtitle": "Интерактивная симуляция",
+        "instruction": "Инструкция",
+        "authorship": "Авторство",
+        "theory": "Теория",
+        "simulation": "Симуляция",
+        "language": "Язык",
+        "main_menu": "← Главное меню",
+    },
+    "en": {
+        "title": "Boltzmann Distribution Laboratory",
+        "subtitle": "Interactive simulation",
+        "instruction": "Instructions",
+        "authorship": "Authorship",
+        "theory": "Theory",
+        "simulation": "Simulation",
+        "language": "Language",
+        "main_menu": "← Main menu",
+    },
+}
+
+# ------------------------------------------------------------
+# ШАБЛОНЫ: заполните своим текстом (обычный HTML).
+# ------------------------------------------------------------
+
+AUTHORSHIP_HTML = {
+    "ru": """
+        <h2>Авторство</h2>
+        <p><b>Автор:</b> [ФИО]</p>
+        <p><b>Руководитель:</b> [ФИО, должность]</p>
+        <p><b>Организация:</b> [Название учреждения]</p>
+        <p><b>Год:</b> [20XX]</p>
+        <p><b>Контакты:</b> [e-mail / сайт]</p>
+        <h3>Благодарности</h3>
+        <p>[Текст]</p>
+        <h3>Лицензия</h3>
+        <p>[Текст]</p>
+    """,
+    "en": """
+        <h2>Authorship</h2>
+        <p><b>Author:</b> [Full name]</p>
+        <p><b>Supervisor:</b> [Full name, position]</p>
+        <p><b>Organization:</b> [Institution]</p>
+        <p><b>Year:</b> [20XX]</p>
+        <p><b>Contacts:</b> [e-mail / website]</p>
+        <h3>Acknowledgements</h3>
+        <p>[Text]</p>
+        <h3>License</h3>
+        <p>[Text]</p>
+    """,
+}
+
+THEORY_HTML = {
+    "ru": """
+        <h2>Теория</h2>
+        <h3>1. [Название раздела]</h3>
+        <p>[Текст]</p>
+        <h3>2. [Название раздела]</h3>
+        <p>[Текст]</p>
+        <h3>3. [Название раздела]</h3>
+        <p>[Текст]</p>
+        <h3>Литература</h3>
+        <ul>
+            <li>[Источник 1]</li>
+            <li>[Источник 2]</li>
+        </ul>
+    """,
+    "en": """
+        <h2>Theory</h2>
+        <h3>1. [Section title]</h3>
+        <p>[Text]</p>
+        <h3>2. [Section title]</h3>
+        <p>[Text]</p>
+        <h3>3. [Section title]</h3>
+        <p>[Text]</p>
+        <h3>References</h3>
+        <ul>
+            <li>[Source 1]</li>
+            <li>[Source 2]</li>
+        </ul>
+    """,
+}
+
+INSTRUCTION_HTML = {
+    "ru": """
+        <h2>Инструкция</h2>
+
+        <h3>Быстрый старт</h3>
+        <ol>
+            <li>Нажмите «Симуляция».</li>
+            <li>Задайте потенциальную энергию U(x): либо выберите
+                «Готовые графики» и нажмите «Применить готовый», либо
+                нажмите «Нарисовать новый график», проведите линию мышью
+                по верхнему графику слева направо и нажмите
+                «Готово / применить».</li>
+            <li>Симуляция запустится сама. Кнопка «Пауза / Старт»
+                останавливает и продолжает движение.</li>
+        </ol>
+
+        <h3>Что показано на экране</h3>
+        <ul>
+            <li><b>Верхний график</b> — потенциальная энергия U(x).</li>
+            <li><b>Поле частиц</b> — движение частиц. Цвет фона отражает
+                U(x). Цвет частицы показывает скорость: медленные голубые,
+                быстрые жёлто-красные. Жёлтая вертикальная линия — центр масс.</li>
+            <li><b>Нижний график</b> — гистограмма положений частиц
+                (эксперимент) и кривая теории Больцмана
+                p(x) ~ exp(−U(x)/T).</li>
+            <li><b>Строка статистики</b> — центр масс, энтропия
+                S = −Σ p ln p, температура и число частиц слева и справа
+                от перегородки.</li>
+        </ul>
+
+        <h3>Параметры моделирования</h3>
+        <ul>
+            <li><b>Число частиц</b> и <b>радиус</b> — размер системы.</li>
+            <li><b>Температура T</b> — средняя кинетическая энергия частиц.</li>
+            <li><b>Масштаб энергии</b> — глубина потенциала относительно T.
+                Чем он больше, тем сильнее частицы скапливаются в ямах.</li>
+            <li><b>Распределить заново</b> — расставить частицы сразу по
+                Больцману.</li>
+        </ul>
+
+        <h3>Перегородка</h3>
+        <p>Тип выбирается в группе «Перегородка». Положение задаётся числом
+        или перетаскиванием красной линии мышью на поле частиц.
+        Курсор над перегородкой превращается в стрелку ↔.</p>
+        <ul>
+            <li><b>Сплошная</b> — непроницаемая стенка.</li>
+            <li><b>Пористая</b> — стенка с тремя порами. Проходят только
+                частицы, которые помещаются в пору.</li>
+            <li><b>Рассеиватели</b> — ряды кругов, эллипсов или треугольников,
+                а также «Градиент →» и «Градиент ←» (пять рядов кругов с
+                растущим или убывающим радиусом).</li>
+            <li><b>Полупроницаемая</b> — при каждом ударе случайно
+                решается, пройдёт ли частица. Вероятности слева направо
+                и справа налево задаются отдельно.</li>
+        </ul>
+        <p>Перегородка при движении ведёт себя как бесконечно тяжёлая стенка:
+        отражённая частица получает скорость стенки.
+        Флажок <b>«Перегородка совершает работу»</b> включает и выключает
+        этот эффект. Если он выключен, отражение происходит так, словно
+        стенка неподвижна.</p>
+
+        <h3>Режим «Демон Максвелла»</h3>
+        <p>Переключается списком «Режим» вверху левой панели. Перегородка
+        становится неподвижной линией, а частицы окрашиваются в 1–3 цвета.
+        Когда частица достигает линии, а правило не решает её судьбу,
+        симуляция останавливается и вы выбираете:</p>
+        <ul>
+            <li><b>Пропустить</b> — клавиша → или Пробел;</li>
+            <li><b>Отразить</b> — клавиша ← или Esc.</li>
+        </ul>
+        <p>Для каждого цвета можно задать автоматическое правило:
+        «Не пропускать», «Пропускать →», «Пропускать ←» или
+        «Пропускать всегда». Поле «иначе» определяет, что делать с
+        частицами, которые правило не пропустило: «Спрашивать» или
+        «Отражать». Так можно собрать, например, сортировку по цветам
+        без единого щелчка.</p>
+
+        <h3>Советы</h3>
+        <ul>
+            <li>Симуляция идёт только после задания потенциала.</li>
+            <li>Клавиши-стрелки могут уходить в числовое поле, если там стоит
+                фокус. Кликните по полю частиц или пользуйтесь кнопками.</li>
+            <li>Кнопка «Главное меню» закрывает симуляцию, и все
+                настройки сбрасываются.</li>
+        </ul>
+    """,
+    "en": """
+        <h2>Instructions</h2>
+
+        <h3>Quick start</h3>
+        <ol>
+            <li>Press “Simulation”.</li>
+            <li>Define the potential energy U(x): either choose a preset
+                and press “Apply preset”, or press “Draw new potential”,
+                draw a line with the mouse on the upper graph from left
+                to right and press “Apply”.</li>
+            <li>The simulation starts automatically. The Start / Pause
+                button stops and resumes the motion.</li>
+        </ol>
+
+        <h3>What is on the screen</h3>
+        <ul>
+            <li><b>Upper graph</b>: potential energy U(x).</li>
+            <li><b>Particle field</b>: the particles. The background shows
+                U(x). Particle color shows speed: slow ones are light blue,
+                fast ones yellow-red. The yellow vertical line is the
+                center of mass.</li>
+            <li><b>Lower graph</b>: histogram of particle positions
+                (experiment) and the Boltzmann curve
+                p(x) ~ exp(−U(x)/T).</li>
+            <li><b>Statistics line</b>: center of mass, entropy
+                S = −Σ p ln p, temperature, and the number of particles
+                on each side of the partition.</li>
+        </ul>
+
+        <h3>Simulation parameters</h3>
+        <ul>
+            <li><b>Number of particles</b> and <b>radius</b> set the system size.</li>
+            <li><b>Temperature T</b> is the mean kinetic energy of particles.</li>
+            <li><b>Energy scale</b> is the potential depth relative to T.
+                The larger it is, the more strongly particles gather in wells.</li>
+            <li><b>Redistribute</b> places particles immediately according
+                to Boltzmann.</li>
+        </ul>
+
+        <h3>Partition</h3>
+        <p>Choose the type in the “Partition” group. Set the position with
+        the number box or by dragging the red line with the mouse on the
+        particle field. The cursor becomes a ↔ arrow over the partition.</p>
+        <ul>
+            <li><b>Solid</b>: an impermeable wall.</li>
+            <li><b>Porous</b>: a wall with three pores. Only particles that
+                fit into a pore can pass.</li>
+            <li><b>Scatterers</b>: rows of circles, ellipses or triangles, plus
+                “Gradient →” and “Gradient ←” (five rows of circles with
+                growing or shrinking radius).</li>
+            <li><b>Semi-permeable</b>: on every hit a random decision is made
+                whether the particle passes. The left-to-right and
+                right-to-left probabilities are set separately.</li>
+        </ul>
+        <p>A moving partition acts as an infinitely heavy wall: a reflected
+        particle receives the wall's velocity. The
+        <b>“Partition does work”</b> checkbox turns this effect on and off.
+        When it is off, reflection happens as if the wall were at rest.</p>
+
+        <h3>Maxwell's demon mode</h3>
+        <p>Switch it with the “Mode” list at the top of the left panel.
+        The partition becomes a fixed line and particles are colored in
+        1–3 colors. When a particle reaches the line and no rule decides
+        its fate, the simulation stops and you choose:</p>
+        <ul>
+            <li><b>Let through</b>: → key or Space;</li>
+            <li><b>Reflect</b>: ← key or Esc.</li>
+        </ul>
+        <p>For each color you can set an automatic rule: “Never let through”,
+        “Let through →”, “Let through ←” or “Always let through”. The
+        “otherwise” field defines what happens to particles the rule did
+        not let through: “Ask” or “Reflect”. For example, you can build
+        color sorting without a single click.</p>
+
+        <h3>Tips</h3>
+        <ul>
+            <li>The simulation runs only after a potential is defined.</li>
+            <li>Arrow keys may go to a number box if it has focus. Click the
+                particle field or use the buttons.</li>
+            <li>The “Main menu” button closes the simulation and resets all
+                settings.</li>
+        </ul>
+    """,
+}
 
 
 # ============================================================
@@ -1645,11 +1904,12 @@ class BoltzmannSimulation:
 # ============================================================
 
 class MainWindow(QMainWindow):
+    menuRequested = pyqtSignal()
 
-    def __init__(self):
+    def __init__(self, language="ru"):
         super().__init__()
 
-        self.language = "ru"
+        self.language = language
 
         self.sim = BoltzmannSimulation()
 
@@ -1666,18 +1926,22 @@ class MainWindow(QMainWindow):
             depth=32,
         )
 
+        # 1) сначала создаём виджеты и сигналы
         self._build_ui()
         self._connect_signals()
-        self.set_language("ru")
+
+        # 2) только потом работаем с language_combo
+        self.language_combo.blockSignals(True)
+        self.language_combo.setCurrentIndex(0 if language == "ru" else 1)
+        self.language_combo.blockSignals(False)
+
+        self.set_language(language)
 
         self.new_potential()
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.animation_frame)
         self.timer.start(round(1000 / FPS))
-
-        self.resize(1280, 900)
-        self.setMinimumSize(950, 650)
 
     def barrier_dragged(self, fraction):
         fraction = float(np.clip(fraction, BARRIER_MIN, BARRIER_MAX))
@@ -1714,6 +1978,11 @@ class MainWindow(QMainWindow):
         self.controls_scroll.setWidget(controls)
 
         self.controls_layout = QVBoxLayout(controls)
+
+        self.menu_button = QPushButton()
+        self.menu_button.clicked.connect(self.menuRequested.emit)
+
+        self.controls_layout.addWidget(self.menu_button)
 
         # Язык
         language_row = QHBoxLayout()
@@ -2373,6 +2642,8 @@ class MainWindow(QMainWindow):
         self.language_label.setText(
             self.tr("language")
         )
+
+        self.menu_button.setText(MENU_TEXT[language]["main_menu"])
 
         self.potential_group.setTitle(
             self.tr("potential_group")
@@ -3292,6 +3563,10 @@ class MainWindow(QMainWindow):
     # ЗАКРЫТИЕ
     # ========================================================
 
+    def shutdown(self):
+        if hasattr(self, "timer"):
+            self.timer.stop()
+
     def closeEvent(self, event):
         if hasattr(self, "timer"):
             self.timer.stop()
@@ -3406,12 +3681,240 @@ class MainWindow(QMainWindow):
         self.update_status()
 
 
+class InfoPage(QWidget):
+    """Страница с текстом и кнопкой «Главное меню»."""
+
+    menuRequested = pyqtSignal()
+
+    def __init__(self, html_by_language):
+        super().__init__()
+
+        self.html_by_language = html_by_language
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        top = QHBoxLayout()
+
+        self.menu_button = QPushButton()
+        self.menu_button.setMinimumWidth(160)
+        self.menu_button.clicked.connect(self.menuRequested.emit)
+
+        top.addWidget(self.menu_button)
+        top.addStretch(1)
+
+        layout.addLayout(top)
+
+        self.browser = QTextBrowser()
+        self.browser.setOpenExternalLinks(True)
+        self.browser.setStyleSheet(
+            """
+            QTextBrowser {
+                background: white;
+                color: #0f172a;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                padding: 12px;
+                font-size: 14px;
+            }
+            """
+        )
+
+        layout.addWidget(self.browser, 1)
+
+    def set_language(self, language):
+        self.menu_button.setText(MENU_TEXT[language]["main_menu"])
+        self.browser.setHtml(self.html_by_language[language])
+
+
+class AppWindow(QMainWindow):
+    """Оболочка: главное меню, разделы и симуляция."""
+
+    PAGE_MENU = 0
+    PAGE_INSTRUCTION = 1
+    PAGE_AUTHORSHIP = 2
+    PAGE_THEORY = 3
+
+    def __init__(self):
+        super().__init__()
+
+        self.language = "ru"
+        self.sim_window = None
+
+        self.stack = QStackedWidget()
+        self.setCentralWidget(self.stack)
+
+        self._build_menu_page()
+
+        self.pages = [
+            InfoPage(INSTRUCTION_HTML),
+            InfoPage(AUTHORSHIP_HTML),
+            InfoPage(THEORY_HTML),
+        ]
+
+        for page in self.pages:
+            page.menuRequested.connect(self.back_to_menu)
+            self.stack.addWidget(page)
+
+        self.set_language("ru")
+        self.stack.setCurrentIndex(self.PAGE_MENU)
+
+        self.resize(1280, 900)
+        self.setMinimumSize(950, 650)
+
+    # --------------------------------------------------------
+
+    def _build_menu_page(self):
+        page = QWidget()
+
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(40, 40, 40, 40)
+
+        outer.addStretch(2)
+
+        self.menu_title = QLabel()
+        self.menu_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.menu_title.setStyleSheet(
+            "font-size: 30px; font-weight: bold; color: #0f172a;"
+        )
+
+        self.menu_subtitle = QLabel()
+        self.menu_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.menu_subtitle.setStyleSheet("font-size: 15px; color: #64748b;")
+
+        outer.addWidget(self.menu_title)
+        outer.addWidget(self.menu_subtitle)
+        outer.addSpacing(30)
+
+        button_style = """
+            QPushButton {
+                font-size: 17px;
+                min-height: 48px;
+                min-width: 280px;
+                max-width: 280px;
+                border-radius: 8px;
+                background: #1e293b;
+                color: white;
+            }
+            QPushButton:hover {
+                background: #334155;
+            }
+        """
+
+        self.menu_buttons = {}
+
+        for key, handler in (
+            ("instruction", lambda: self.open_page(self.PAGE_INSTRUCTION)),
+            ("authorship", lambda: self.open_page(self.PAGE_AUTHORSHIP)),
+            ("theory", lambda: self.open_page(self.PAGE_THEORY)),
+            ("simulation", self.open_simulation),
+        ):
+            button = QPushButton()
+            button.setStyleSheet(button_style)
+            button.clicked.connect(lambda _=False, h=handler: h())
+
+            row = QHBoxLayout()
+            row.addStretch(1)
+            row.addWidget(button)
+            row.addStretch(1)
+
+            outer.addLayout(row)
+
+            self.menu_buttons[key] = button
+
+        outer.addSpacing(20)
+
+        language_row = QHBoxLayout()
+        language_row.addStretch(1)
+
+        self.menu_language_label = QLabel()
+        self.menu_language_combo = QComboBox()
+        self.menu_language_combo.addItems(["Русский", "English"])
+        self.menu_language_combo.currentIndexChanged.connect(
+            lambda index: self.set_language("ru" if index == 0 else "en")
+        )
+
+        language_row.addWidget(self.menu_language_label)
+        language_row.addWidget(self.menu_language_combo)
+        language_row.addStretch(1)
+
+        outer.addLayout(language_row)
+        outer.addStretch(3)
+
+        self.stack.addWidget(page)
+
+    def set_language(self, language):
+        self.language = language
+
+        text = MENU_TEXT[language]
+
+        self.setWindowTitle(text["title"])
+        self.menu_title.setText(text["title"])
+        self.menu_subtitle.setText(text["subtitle"])
+        self.menu_language_label.setText(text["language"])
+
+        for key, button in self.menu_buttons.items():
+            button.setText(text[key])
+
+        for page in getattr(self, "pages", []):
+            page.set_language(language)
+
+        index = 0 if language == "ru" else 1
+
+        if self.menu_language_combo.currentIndex() != index:
+            self.menu_language_combo.blockSignals(True)
+            self.menu_language_combo.setCurrentIndex(index)
+            self.menu_language_combo.blockSignals(False)
+
+    # --------------------------------------------------------
+
+    def open_page(self, index):
+        self.stack.setCurrentIndex(index)
+
+    def open_simulation(self):
+        if self.sim_window is not None:
+            return
+
+        # Каждый раз создаётся новая симуляция с настройками по умолчанию.
+        self.sim_window = MainWindow(self.language)
+        self.sim_window.menuRequested.connect(self.back_to_menu)
+
+        self.stack.addWidget(self.sim_window)
+        self.stack.setCurrentWidget(self.sim_window)
+
+    def _destroy_simulation(self):
+        if self.sim_window is None:
+            return
+
+        window = self.sim_window
+        self.sim_window = None
+
+        # Язык, выбранный внутри симуляции, переносим в меню.
+        language = window.language
+
+        window.shutdown()
+
+        self.stack.removeWidget(window)
+        window.deleteLater()
+
+        self.set_language(language)
+
+    def back_to_menu(self):
+        self._destroy_simulation()
+        self.stack.setCurrentIndex(self.PAGE_MENU)
+
+    def closeEvent(self, event):
+        self._destroy_simulation()
+        pygame.quit()
+        event.accept()
+
 # ============================================================
 # ЗАПУСК
 # ============================================================
 
 def main():
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
 
     # Небольшой общий стиль.
     app.setStyleSheet(
@@ -3445,7 +3948,7 @@ def main():
         """
     )
 
-    window = MainWindow()
+    window = AppWindow()
     window.show()
 
     sys.exit(app.exec())
