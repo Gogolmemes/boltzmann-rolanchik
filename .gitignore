@@ -1,1 +1,23 @@
 venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+
+# Virtual environments
+venv/
+.env/
+.venv/
+
+# Numba cache
+__pycache__/
+*.nbi
+*.nbc
+
+# CuPy / CUDA временные файлы (на всякий случай)
+cupy_cache/
+.cuda_cache/

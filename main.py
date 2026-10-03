@@ -4,7 +4,14 @@ import pygame
 import pyqtgraph as pg
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtGui import (
+    QImage, 
+    QPixmap,
+    QImage, 
+    QKeySequence, 
+    QPixmap, 
+    QShortcut
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -22,6 +29,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QVBoxLayout,
     QWidget,
+    QCheckBox
 )
 
 
@@ -47,6 +55,9 @@ BARRIER_MIN = 0.10          # допустимый диапазон положе
 BARRIER_MAX = 0.90
 BARRIER_MAX_SPEED = 4.0     # макс. скорость стенки, в единицах поля в секунду
 BARRIER_RESPONSE = 40.0     # 1/с: насколько быстро стенка догоняет курсор
+
+DEMON_COLORS = [(239, 68, 68), (34, 197, 94), (59, 130, 246)]
+DEMON_HEX = ["#ef4444", "#22c55e", "#3b82f6"]
 
 
 # ============================================================
@@ -118,6 +129,33 @@ TEXT = {
             "ЛКМ по верхнему графику — рисование потенциальной энергии.\n"
             "Новый график начинается с чистого поля."
         ),
+        "barrier_work": "Перегородка совершает работу",
+        "mode_label": "Режим",
+        "mode_normal": "Обычный",
+        "mode_demon": "Демон Максвелла",
+        "demon_group": "Демон Максвелла",
+        "demon_colors": "Число цветов",
+        "demon_recolor": "Перекрасить частицы",
+        "demon_color_1": "Красные",
+        "demon_color_2": "Зелёные",
+        "demon_color_3": "Синие",
+        "pass_never": "Не пропускать",
+        "pass_lr": "Пропускать →",
+        "pass_rl": "Пропускать ←",
+        "pass_all": "Пропускать всегда",
+        "else_label": "   иначе",
+        "else_ask": "Спрашивать",
+        "else_reflect": "Отражать",
+        "demon_pass": "Пропустить (→)",
+        "demon_reflect": "Отразить (←)",
+        "demon_particle": "Частица у перегородки",
+        "demon_queue": "в очереди",
+        "dir_lr": "летит слева направо",
+        "dir_rl": "летит справа налево",
+        "demon_wait": "Демон ждёт решения: пропустить или отразить частицу.",
+        "demon_idle": "Демон наблюдает. Решение понадобится, когда частица подлетит к линии.",
+        "shape_grad_lr": "Градиент → (малые к большим)",
+        "shape_grad_rl": "Градиент ← (большие к малым)",
     },
     "en": {
         "barrier_scatter": "Scatterers",
@@ -183,6 +221,33 @@ TEXT = {
             "Left mouse button on the upper graph draws potential energy.\n"
             "A new drawing starts from an empty graph."
         ),
+        "barrier_work": "Перегородка совершает работу",
+        "mode_label": "Mode",
+        "mode_normal": "Normal",
+        "mode_demon": "Maxwell's demon",
+        "demon_group": "Maxwell's demon",
+        "demon_colors": "Number of colors",
+        "demon_recolor": "Recolor particles",
+        "demon_color_1": "Red",
+        "demon_color_2": "Green",
+        "demon_color_3": "Blue",
+        "pass_never": "Never let through",
+        "pass_lr": "Let through →",
+        "pass_rl": "Let through ←",
+        "pass_all": "Always let through",
+        "else_label": "   otherwise",
+        "else_ask": "Ask",
+        "else_reflect": "Reflect",
+        "demon_pass": "Let through (→)",
+        "demon_reflect": "Reflect (←)",
+        "demon_particle": "Particle at the partition",
+        "demon_queue": "queued",
+        "dir_lr": "moving left to right",
+        "dir_rl": "moving right to left",
+        "demon_wait": "The demon is waiting: let the particle through or reflect it.",
+        "demon_idle": "The demon is watching. A decision is needed when a particle reaches the line.",
+        "shape_grad_lr": "Gradient → (small to large)",
+        "shape_grad_rl": "Gradient ← (large to small)",
     },
 }
 
@@ -608,6 +673,15 @@ class BoltzmannSimulation:
         self.barrier_goal = 0.5        # куда стенку тянет мышь
         self.barrier_velocity = 0.0    # скорость стенки по x
 
+        self.barrier_does_work = True   # False: стенка «как неподвижная»
+
+        self.color_count = 2
+        self.colors = np.zeros(0, dtype=int)
+        self.demon_pass = [0, 0, 0]   # 0 не пропускать, 1 →, 2 ←, 3 всегда
+        self.demon_else = [0, 0, 0]   # 0 спрашивать, 1 отражать
+        self.demon_side = np.zeros(0, dtype=int)   # 0 слева, 1 справа
+        self.demon_queue = []           # частицы, ждущие решения
+
         self.scatter_shape = 0         # 0 круги, 1 эллипсы, 2 треугольники, 3 смешанные
         self.scatter_count = 3
         self.scatter_size_px = 16
@@ -770,6 +844,9 @@ class BoltzmannSimulation:
 
         self.positions = np.column_stack((x, y))
 
+        self.recolor()
+        self.demon_assign_sides()
+
         thermal_speed = np.sqrt(
             max(self.temperature, 1e-6)
         )
@@ -790,6 +867,10 @@ class BoltzmannSimulation:
     # --------------------------------------------------------
     # Перегородка
     # --------------------------------------------------------
+
+    @property
+    def demon_mode(self):
+        return self.barrier_mode == 5
 
     @property
     def barrier_x(self):
@@ -861,8 +942,10 @@ class BoltzmannSimulation:
         size = min(self.scatter_size_px / FIELD_HEIGHT, 0.25 / n)
 
         angle = np.radians(self.scatter_angle)
-        columns = self.scatter_columns
-        pitch = 3.4 * size
+
+        gradient = self.scatter_shape >= 4
+        columns = 5 if gradient else self.scatter_columns
+        pitch = (2.4 if gradient else 3.4) * size
 
         result = []
         k = 0
@@ -876,22 +959,40 @@ class BoltzmannSimulation:
                 # Сдвинутый ряд, как в доске Гальтона.
                 ys = [i / n * WORLD_H for i in range(n + 1)]
 
-            for cy in ys:
-                shape = self.scatter_shape if self.scatter_shape < 3 else k % 3
-                k += 1
+            if gradient:
+                t = c / (columns - 1)
 
-                if shape == 0:
-                    ob = Obstacle("ellipse", dx, cy, angle, a=size, b=size)
-                elif shape == 1:
+                if self.scatter_shape == 5:
+                    t = 1.0 - t
+
+                # Радиус от 35% до 100% от заданного размера.
+                radius = size * (0.35 + 0.65 * t)
+
+            for cy in ys:
+                if gradient:
                     ob = Obstacle(
-                        "ellipse", dx, cy, angle,
-                        a=1.6 * size, b=0.7 * size,
+                        "ellipse", dx, cy, angle, a=radius, b=radius
                     )
                 else:
-                    ob = Obstacle(
-                        "triangle", dx, cy, angle, radius=1.4 * size
+                    shape = (
+                        self.scatter_shape
+                        if self.scatter_shape < 3
+                        else k % 3
                     )
 
+                    if shape == 0:
+                        ob = Obstacle("ellipse", dx, cy, angle, a=size, b=size)
+                    elif shape == 1:
+                        ob = Obstacle(
+                            "ellipse", dx, cy, angle,
+                            a=1.6 * size, b=0.7 * size,
+                        )
+                    else:
+                        ob = Obstacle(
+                            "triangle", dx, cy, angle, radius=1.4 * size
+                        )
+
+                k += 1
                 result.append(ob)
 
         self._obstacle_key = key
@@ -907,7 +1008,7 @@ class BoltzmannSimulation:
         меняет знак: v' = v - 2 ((v - W) . n) n, где W = (w, 0).
         """
         bx = self.barrier_x
-        w = self.barrier_velocity
+        w = self.collision_wall_velocity()
         r = self.radius
 
         pos = self.positions
@@ -942,6 +1043,87 @@ class BoltzmannSimulation:
 
             vel[j] -= 2.0 * vn[approaching][:, None] * nh[approaching]
 
+    def recolor(self):
+        self.colors = self.rng.integers(0, self.color_count, self.n)
+
+    def demon_assign_sides(self):
+        """Запоминает, по какую сторону линии находится каждая частица."""
+        self.demon_side = (self.positions[:, 0] >= self.barrier_x).astype(int)
+        self.demon_queue.clear()
+
+    def _demon_place(self, i, side):
+        eps = 1e-6
+        self.positions[i, 0] = self.barrier_x + (eps if side == 1 else -eps)
+
+    def _demon_reflect(self, i):
+        side = int(self.demon_side[i])
+        self._demon_place(i, side)
+
+        speed = abs(self.velocities[i, 0])
+        self.velocities[i, 0] = speed if side == 1 else -speed
+
+    def _demon_collision(self):
+        """
+        Удар = центр частицы пересёк линию. Правило по цвету:
+        пропустить, отразить или поставить частицу в очередь на решение.
+        Ждущая частица возвращается на свою сторону, скорость не меняется.
+        """
+        bx = self.barrier_x
+        x = self.positions[:, 0]
+        side = self.demon_side
+
+        crossed = (
+            ((side == 0) & (x >= bx))
+            | ((side == 1) & (x < bx))
+        )
+
+        for i in np.flatnonzero(crossed):
+            c = int(self.colors[i])
+            mode = self.demon_pass[c]
+
+            # side == 0: частица летит слева направо (→), side == 1: справа налево (←)
+            allowed = (
+                mode == 3
+                or (mode == 1 and side[i] == 0)
+                or (mode == 2 and side[i] == 1)
+            )
+
+            if allowed:
+                side[i] = 1 - side[i]
+            elif self.demon_else[c] == 1:
+                self._demon_reflect(i)
+            else:
+                self._demon_place(i, side[i])
+                self.demon_queue.append(int(i))
+
+    def _demon_enforce(self):
+        """После парных столкновений никто не должен проскочить без решения."""
+        if len(self.demon_side) != len(self.positions):
+            return
+
+        bx = self.barrier_x
+        x = self.positions[:, 0]
+
+        left = (self.demon_side == 0) & (x >= bx)
+        right = (self.demon_side == 1) & (x < bx)
+
+        self.positions[left, 0] = bx - 1e-6
+        self.positions[right, 0] = bx + 1e-6
+
+    def demon_resolve(self, let_pass):
+        """Решение пользователя для первой частицы в очереди."""
+        if not self.demon_queue:
+            return
+
+        i = self.demon_queue.pop(0)
+
+        if let_pass:
+            side = 1 - int(self.demon_side[i])
+            self.demon_side[i] = side
+            self._demon_place(i, side)
+        else:
+            self._demon_reflect(i)
+
     def _semipermeable_crossing(self, old_x, old_bx):
         """
         Каждое пересечение плоскости перегородки — случайное решение.
@@ -949,8 +1131,8 @@ class BoltzmannSimulation:
         Не прошла: отражение от стенки, v' = 2w - v.
         """
         bx = self.barrier_x
-        w = self.barrier_velocity
-
+        w = self.collision_wall_velocity()
+        
         x = self.positions[:, 0]
 
         left_to_right = (old_x < old_bx) & (x >= bx)
@@ -969,7 +1151,16 @@ class BoltzmannSimulation:
             (rejected & right_to_left, +1.0),
         ):
             self.positions[mask, 0] = bx + side * 1e-6
-            self.velocities[mask, 0] = 2.0 * w - self.velocities[mask, 0]
+
+            v = self.velocities[:, 0]
+
+            # Отражаем только если частица и стенка сближаются.
+            if side < 0.0:
+                bounce = mask & (v > w)
+            else:
+                bounce = mask & (v < w)
+
+            self.velocities[bounce, 0] = 2.0 * w - v[bounce]
 
     def can_pass_array(self, y):
         """Векторная версия particle_can_pass."""
@@ -1012,6 +1203,10 @@ class BoltzmannSimulation:
 
         return False
 
+    def collision_wall_velocity(self):
+        """Скорость стенки, которая входит в формулы столкновения."""
+        return self.barrier_velocity if self.barrier_does_work else 0.0
+
     def _move_barrier(self, dt):
         """Плавно двигает стенку к цели и запоминает её скорость."""
         goal = float(np.clip(self.barrier_goal, BARRIER_MIN, BARRIER_MAX))
@@ -1046,8 +1241,12 @@ class BoltzmannSimulation:
             self._semipermeable_crossing(old_x, old_bx)
             return
 
+        if self.barrier_mode == 5:
+            self._demon_collision()
+            return
+
         bx = self.barrier_x
-        w = self.barrier_velocity
+        w = self.collision_wall_velocity()
         r = self.radius
 
         blocked = ~self.can_pass_array(self.positions[:, 1])
@@ -1070,11 +1269,16 @@ class BoltzmannSimulation:
 
     def _enforce_barrier(self):
         """Страховка после столкновений частиц друг с другом."""
+
+        if self.barrier_mode == 5:
+            self._demon_enforce()
+            return
+
         if self.barrier_mode in (0, 3, 4):
             return
 
         bx = self.barrier_x
-        w = self.barrier_velocity
+        w = self.collision_wall_velocity()
         r = self.radius
 
         blocked = ~self.can_pass_array(self.positions[:, 1])
@@ -1262,7 +1466,14 @@ class BoltzmannSimulation:
             return
 
         old_bx = self.barrier_x
-        self._move_barrier(dt)
+        if self.demon_mode:
+            # Линия неподвижна и ставится строго по координате.
+            self.barrier_fraction = float(
+                np.clip(self.barrier_goal, BARRIER_MIN, BARRIER_MAX)
+            )
+            self.barrier_velocity = 0.0
+        else:
+            self._move_barrier(dt)
 
         force = self.force_x(self.positions[:, 0])
         self.velocities[:, 0] += 0.5 * dt * force
@@ -1445,6 +1656,7 @@ class MainWindow(QMainWindow):
         self.running = False
         self.potential_defined = False
 
+        self._last_queue_len = 0
         self.frame_counter = 0
 
         # Pygame используется как off-screen renderer.
@@ -1517,6 +1729,17 @@ class MainWindow(QMainWindow):
 
         self.controls_layout.addLayout(language_row)
 
+        mode_row = QHBoxLayout()
+
+        self.mode_label = QLabel()
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["", ""])
+
+        mode_row.addWidget(self.mode_label)
+        mode_row.addWidget(self.mode_combo)
+
+        self.controls_layout.addLayout(mode_row)
+
         # ----------------------------------------------------
         # Потенциал
         # ----------------------------------------------------
@@ -1583,7 +1806,7 @@ class MainWindow(QMainWindow):
         simulation_form = QFormLayout()
 
         self.particles_spin = QSpinBox()
-        self.particles_spin.setRange(20, 300)
+        self.particles_spin.setRange(5, 1000)
         self.particles_spin.setValue(120)
 
         self.radius_spin = QSpinBox()
@@ -1671,7 +1894,7 @@ class MainWindow(QMainWindow):
         self.pore_label = QLabel()
 
         self.scatter_shape_combo = QComboBox()
-        self.scatter_shape_combo.addItems(["", "", "", ""])
+        self.scatter_shape_combo.addItems(["", "", "", "", "", ""])
 
         self.scatter_count_spin = QSpinBox()
         self.scatter_count_spin.setRange(1, 8)
@@ -1743,9 +1966,57 @@ class MainWindow(QMainWindow):
         barrier_form.addRow(self.p_lr_label, self.p_lr_spin)
         barrier_form.addRow(self.p_rl_label, self.p_rl_spin)
 
+        self.barrier_work_check = QCheckBox()
+        self.barrier_work_check.setChecked(True)
+
+        barrier_form.addRow(self.barrier_work_check)
+
         self.controls_layout.addWidget(
             self.barrier_group
         )
+
+        self.demon_group = QGroupBox()
+        demon_form = QFormLayout(self.demon_group)
+
+        self.demon_colors_label = QLabel()
+        self.demon_colors_spin = QSpinBox()
+        self.demon_colors_spin.setRange(1, 3)
+        self.demon_colors_spin.setValue(2)
+
+        demon_form.addRow(self.demon_colors_label, self.demon_colors_spin)
+
+        self.rule_labels = []
+        self.rule_combos = []
+        self.else_labels = []
+        self.else_combos = []
+
+        for k in range(3):
+            label = QLabel()
+            label.setStyleSheet(
+                f"color: {DEMON_HEX[k]}; font-weight: bold;"
+            )
+
+            combo = QComboBox()
+            combo.addItems(["", "", "", ""])
+
+            else_label = QLabel()
+            else_label.setStyleSheet(f"color: {DEMON_HEX[k]};")
+
+            else_combo = QComboBox()
+            else_combo.addItems(["", ""])
+
+            demon_form.addRow(label, combo)
+            demon_form.addRow(else_label, else_combo)
+
+            self.rule_labels.append(label)
+            self.rule_combos.append(combo)
+            self.else_labels.append(else_label)
+            self.else_combos.append(else_combo)
+
+        self.recolor_button = QPushButton()
+        demon_form.addRow(self.recolor_button)
+
+        self.controls_layout.addWidget(self.demon_group)
 
         # Статус
         self.status_label = QLabel()
@@ -1831,6 +2102,49 @@ class MainWindow(QMainWindow):
             self.particle_view,
             3,
         )
+
+        self.demon_panel = QFrame()
+        self.demon_panel.setObjectName("demonPanel")
+        self.demon_panel.setStyleSheet(
+            """
+            #demonPanel {
+                background: #fef3c7;
+                border: 1px solid #f59e0b;
+                border-radius: 6px;
+            }
+            """
+        )
+
+        demon_panel_layout = QHBoxLayout(self.demon_panel)
+
+        self.demon_label = QLabel()
+        self.demon_label.setStyleSheet("color: #0f172a; font-weight: bold;")
+        self.demon_label.setWordWrap(True)
+
+        self.demon_pass_button = QPushButton()
+        self.demon_reflect_button = QPushButton()
+
+        for button in (self.demon_pass_button, self.demon_reflect_button):
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setMinimumWidth(130)
+
+        demon_panel_layout.addWidget(self.demon_label, 1)
+        demon_panel_layout.addWidget(self.demon_pass_button)
+        demon_panel_layout.addWidget(self.demon_reflect_button)
+
+        self.demon_panel.setVisible(False)
+
+        right_layout.addWidget(self.demon_panel)
+
+        # Горячие клавиши: → / Пробел пропускают, ← / Esc отражают.
+        for key, value in (
+            ("Right", True), ("Space", True),
+            ("Left", False), ("Escape", False),
+        ):
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.activated.connect(
+                lambda v=value: self.demon_decide(v)
+            )
 
         # Распределение
         self.distribution_title = QLabel()
@@ -2021,6 +2335,21 @@ class MainWindow(QMainWindow):
         self.scatter_angle_spin.valueChanged.connect(self.parameters_changed)
         self.p_lr_spin.valueChanged.connect(self.parameters_changed)
         self.p_rl_spin.valueChanged.connect(self.parameters_changed)
+        self.barrier_work_check.toggled.connect(self.parameters_changed)
+
+        self.mode_combo.currentIndexChanged.connect(self.mode_changed)
+        self.demon_colors_spin.valueChanged.connect(self.demon_colors_changed)
+        self.recolor_button.clicked.connect(self.demon_recolor)
+
+        for combo in self.rule_combos + self.else_combos:
+            combo.currentIndexChanged.connect(self.parameters_changed)
+
+        self.demon_pass_button.clicked.connect(
+            lambda _=False: self.demon_decide(True)
+        )
+        self.demon_reflect_button.clicked.connect(
+            lambda _=False: self.demon_decide(False)
+        )
 
     # ========================================================
     # ПЕРЕВОД
@@ -2191,6 +2520,8 @@ class MainWindow(QMainWindow):
             self.tr("shape_ellipse"),
             self.tr("shape_triangle"),
             self.tr("shape_mixed"),
+            self.tr("shape_grad_lr"),
+            self.tr("shape_grad_rl"),
         ]
 
         for i, name in enumerate(shape_names):
@@ -2203,8 +2534,38 @@ class MainWindow(QMainWindow):
         self.scatter_angle_label.setText(self.tr("scatter_angle"))
         self.p_lr_label.setText(self.tr("p_lr"))
         self.p_rl_label.setText(self.tr("p_rl"))
+        self.barrier_work_check.setText(self.tr("barrier_work"))
+
+        self.mode_label.setText(self.tr("mode_label"))
+        self.mode_combo.setItemText(0, self.tr("mode_normal"))
+        self.mode_combo.setItemText(1, self.tr("mode_demon"))
+
+        self.demon_group.setTitle(self.tr("demon_group"))
+        self.demon_colors_label.setText(self.tr("demon_colors"))
+        self.recolor_button.setText(self.tr("demon_recolor"))
+
+        for k in range(3):
+            self.rule_labels[k].setText(self.tr(f"demon_color_{k + 1}"))
+
+        for combo in self.rule_combos:
+            for i, key in enumerate(
+                ("pass_never", "pass_lr", "pass_rl", "pass_all")
+            ):
+                combo.setItemText(i, self.tr(key))
+
+        for combo in self.else_combos:
+            for i, key in enumerate(("else_ask", "else_reflect")):
+                combo.setItemText(i, self.tr(key))
+
+        for label in self.else_labels:
+            label.setText(self.tr("else_label"))
+
+        self.demon_pass_button.setText(self.tr("demon_pass"))
+        self.demon_reflect_button.setText(self.tr("demon_reflect"))
 
         self.update_barrier_controls()
+
+        self.update_demon_panel()
 
         self.update_start_button()
         self.update_status()
@@ -2353,8 +2714,10 @@ class MainWindow(QMainWindow):
             self.energy_spin.value()
         )
 
+        demon = self.mode_combo.currentIndex() == 1
+
         self.sim.barrier_mode = (
-            self.barrier_combo.currentIndex()
+            5 if demon else self.barrier_combo.currentIndex()
         )
 
         self.sim.barrier_goal = (
@@ -2373,9 +2736,56 @@ class MainWindow(QMainWindow):
         self.sim.p_lr = self.p_lr_spin.value()
         self.sim.p_rl = self.p_rl_spin.value()
 
-        self.update_barrier_controls()
+        self.sim.barrier_does_work = self.barrier_work_check.isChecked()
 
+        self.sim.demon_pass = [
+            combo.currentIndex() for combo in self.rule_combos
+        ]
+        self.sim.demon_else = [
+            combo.currentIndex() for combo in self.else_combos
+        ]
+
+        if demon:
+            self.sim.barrier_fraction = float(
+                np.clip(self.sim.barrier_goal, BARRIER_MIN, BARRIER_MAX)
+            )
+            self.sim.demon_assign_sides()
+        else:
+            self.sim.demon_queue.clear()
+
+        self.update_barrier_controls()
+        self.update_demon_panel()
         self.update_distribution()
+
+    def update_barrier_controls(self):
+        demon = self.mode_combo.currentIndex() == 1
+        mode = self.barrier_combo.currentIndex()
+
+        self.barrier_type_label.setVisible(not demon)
+        self.barrier_combo.setVisible(not demon)
+
+        self.barrier_x_label.setVisible(demon or mode != 0)
+        self.barrier_position_spin.setVisible(demon or mode != 0)
+
+        self.barrier_work_check.setVisible(not demon and mode != 0)
+
+        self.pore_label.setVisible(not demon and mode == 2)
+        self.pore_spin.setVisible(not demon and mode == 2)
+
+        for widget in self.scatter_widgets:
+            widget.setVisible(not demon and mode == 3)
+
+        for widget in self.semi_widgets:
+            widget.setVisible(not demon and mode == 4)
+
+        self.demon_group.setVisible(demon)
+
+        for k in range(3):
+            visible = demon and k < self.demon_colors_spin.value()
+            self.rule_labels[k].setVisible(visible)
+            self.rule_combos[k].setVisible(visible)
+            self.else_labels[k].setVisible(visible)
+            self.else_combos[k].setVisible(visible)
 
     def particle_count_changed(self, value):
         self.sim.n = int(value)
@@ -2435,6 +2845,10 @@ class MainWindow(QMainWindow):
             )
 
     def update_status(self):
+        if self.sim.demon_mode and self.sim.demon_queue:
+            self.status_label.setText(self.tr("demon_wait"))
+            return
+
         if not self.potential_defined:
             self.status_label.setText(
                 self.tr("draw_status")
@@ -2457,17 +2871,26 @@ class MainWindow(QMainWindow):
     def animation_frame(self):
         if self.running and self.potential_defined:
             for _ in range(SUBSTEPS):
+                # Симуляция стоит, пока есть нерешённая частица.
+                if self.sim.demon_queue:
+                    break
+
                 self.sim.step(DT)
         else:
-            # Пауза: перегородку можно двигать, но частицы стоят.
             self.sim.barrier_fraction = float(
                 np.clip(self.sim.barrier_goal, BARRIER_MIN, BARRIER_MAX)
             )
             self.sim.barrier_velocity = 0.0
 
+        queue_len = len(self.sim.demon_queue)
+
+        if queue_len != self._last_queue_len:
+            self._last_queue_len = queue_len
+            self.update_demon_panel()
+
         self.particle_view.barrier_fraction = (
             self.sim.barrier_fraction
-            if self.sim.barrier_mode != 0
+            if self.sim.barrier_mode not in (0, 5)
             else None
         )
 
@@ -2622,7 +3045,8 @@ class MainWindow(QMainWindow):
 
             elif mode == 3:
                 self._draw_obstacles(surface, bx)
-
+            elif mode == 5:
+                self._draw_demon(surface, bx)
             else:
                 self._draw_semipermeable(surface, bx)
 
@@ -2705,6 +3129,9 @@ class MainWindow(QMainWindow):
                 max(0, blue),
             )
 
+            if self.sim.demon_mode:
+                color = DEMON_COLORS[int(self.sim.colors[i])]
+
             pygame.draw.circle(
                 surface,
                 color,
@@ -2718,6 +3145,17 @@ class MainWindow(QMainWindow):
                 (px, py),
                 self.sim.radius_px,
                 1,
+            )
+
+        if self.sim.demon_mode and self.sim.demon_queue:
+            i = self.sim.demon_queue[0]
+
+            px = int(self.sim.positions[i, 0] / WORLD_W * FIELD_WIDTH)
+            py = int(self.sim.positions[i, 1] / WORLD_H * FIELD_HEIGHT)
+
+            pygame.draw.circle(
+                surface, (250, 204, 21),
+                (px, py), self.sim.radius_px + 7, 3,
             )
 
         # Рамка
@@ -2905,20 +3343,67 @@ class MainWindow(QMainWindow):
                 [(bx + 20, y - 7), (bx + 20, y + 7), (bx + 8, y)],
             )
 
-    def update_barrier_controls(self):
-        mode = self.barrier_combo.currentIndex()
+    def _draw_demon(self, surface, bx):
+        for y in range(0, FIELD_HEIGHT, 10):
+            pygame.draw.line(
+                surface, (226, 232, 240),
+                (bx, y), (bx, min(y + 5, FIELD_HEIGHT)), 3,
+            )
 
-        self.barrier_x_label.setVisible(mode != 0)
-        self.barrier_position_spin.setVisible(mode != 0)
+    def mode_changed(self, index):
+        if index == 1 and self.particles_spin.value() > 60:
+            # Иначе удары о линию будут слишком частыми.
+            self.particles_spin.setValue(40)
 
-        self.pore_label.setVisible(mode == 2)
-        self.pore_spin.setVisible(mode == 2)
+        self.parameters_changed()
 
-        for widget in self.scatter_widgets:
-            widget.setVisible(mode == 3)
+    def demon_colors_changed(self, value):
+        self.sim.color_count = int(value)
+        self.sim.recolor()
 
-        for widget in self.semi_widgets:
-            widget.setVisible(mode == 4)
+        self.update_barrier_controls()
+        self.update_demon_panel()
+
+    def demon_recolor(self):
+        self.sim.recolor()
+        self.update_demon_panel()
+
+    def demon_decide(self, let_pass):
+        if not (self.sim.demon_mode and self.sim.demon_queue):
+            return
+
+        self.sim.demon_resolve(let_pass)
+        self.update_demon_panel()
+
+    def update_demon_panel(self):
+        queue = self.sim.demon_queue
+        demon = self.sim.demon_mode
+        waiting = demon and len(queue) > 0
+
+        self.demon_panel.setVisible(demon)
+        self.demon_pass_button.setEnabled(waiting)
+        self.demon_reflect_button.setEnabled(waiting)
+
+        if waiting:
+            i = queue[0]
+            c = int(self.sim.colors[i])
+            speed = float(np.linalg.norm(self.sim.velocities[i]))
+
+            direction = self.tr(
+                "dir_lr" if self.sim.demon_side[i] == 0 else "dir_rl"
+            )
+
+            self.demon_label.setText(
+                f"{self.tr('demon_particle')}: "
+                f"<span style='color:{DEMON_HEX[c]}'>"
+                f"{self.tr(f'demon_color_{c + 1}')}</span>, "
+                f"|v| = {speed:.2f}, {direction} "
+                f"({self.tr('demon_queue')}: {len(queue)})"
+            )
+        else:
+            self.demon_label.setText(self.tr("demon_idle"))
+
+        self.update_status()
 
 
 # ============================================================
