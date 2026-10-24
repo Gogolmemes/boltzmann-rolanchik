@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "boltzmann-rolanchik"
+version = "1.0.0"
+description = "Interactive Boltzmann distribution simulation"
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    "numpy",
+    "numba",
+    "pygame",
+    "PyQt6",
+    "pyqtgraph",
+    "platformdirs",
+]
+
+[project.optional-dependencies]
+build = [
+    "pyinstaller",
+]
+
+[project.scripts]
+boltzmann-lab = "boltzmann_lab.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+boltzmann_lab = [
+    "resources/locales/*.json",
+    "resources/documents/ru/*.html",
+    "resources/documents/en/*.html",
+    "resources/styles/*.qss",
+]

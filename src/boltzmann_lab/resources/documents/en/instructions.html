@@ -1,0 +1,551 @@
+<h1>User Guide</h1>
+<p>Welcome to the interactive particle motion simulation environment!</p>
+<p>This program provides a visual way to explore physical processes involving particle motion and distribution,
+    interactions with a potential energy field, and different types of barriers.</p>
+<p>With this simulation, you can create your own energy landscapes, observe changes in the spatial distribution of
+    particles, investigate statistical patterns, and conduct virtual experiments, including experiments involving
+    Maxwell's demon.</p>
+<p>The program combines visual simulation with statistical analysis tools, allowing you to compare numerical experiments
+    with theoretical predictions from statistical physics.</p>
+
+<h2>1. Getting Started</h2>
+<h3>1.1. Launching the Simulation</h3>
+<p>When you open the program, you will see the main menu. To enter the simulation workspace, click <b>“Simulation”</b>.
+</p>
+<p>The simulation interface will open, displaying a visualization area, graphs of physical quantities, and a panel for
+    controlling system parameters.</p>
+<p>Please note that particles do not start moving immediately after you enter the workspace. You must first define the
+    system's potential energy.</p>
+<div class="instruction-image">
+    <p><b>Figure 1. Program Main Menu</b></p><img src="instruction/en/MainMenu.png" alt="Program main menu"
+        style="max-width: 100%; height: auto;">
+</div>
+
+<h3>1.2. Setting the Potential Energy</h3>
+<p>The first step is to define the potential energy function <b>U(x)</b>, which describes how a particle's potential
+    energy depends on its horizontal position.</p>
+<p>Potential energy influences particle motion and the formation of their spatial distribution. In particular, at
+    thermal equilibrium, regions of lower potential energy are more favorable for particles, all other conditions being
+    equal.</p>
+<p>The program provides two ways to define the potential energy.</p>
+<h4>Method 1. Using a Preset Graph</h4>
+<ol>
+    <li>Find the <b>“Preset Graphs”</b> section in the control panel.</li>
+    <li>Select one of the available potential energy profiles.</li>
+    <li>Click <b>“Apply Preset”</b>.</li>
+    <li>The program will apply the selected U(x) function and automatically start the simulation.</li>
+</ol>
+<p>This method is recommended for first-time users and for experiments with predefined energy landscapes.</p>
+<div class="instruction-image">
+    <p><b>Figure 2. Selecting a Preset Potential Energy Profile</b></p><img src="instruction/en/GraphsList.png"
+        alt="List of preset graphs" style="max-width: 100%; height: auto;"><img src="instruction/en/ApplyDoneGraph.png"
+        alt="Applying a preset graph" style="max-width: 100%; height: auto;">
+</div>
+<h4>Method 2. Drawing a Custom Graph</h4>
+<p>If you want to define the conditions of particle motion yourself, use the potential energy drawing tool.</p>
+<ol>
+    <li>Click <b>“Draw New Graph”</b>.</li>
+    <li>Move the mouse pointer into the upper graph area.</li>
+    <li>Hold down the left mouse button and draw a line <b>from left to right</b> to define the desired shape of U(x).
+    </li>
+    <li>When you finish drawing, click <b>“Done / Apply”</b>.</li>
+    <li>The program will apply the custom graph and automatically start the simulation.</li>
+</ol>
+<p>When drawing a graph, you can create regions with different potential energy values, forming energy minima, maxima,
+    and transition regions.</p>
+<p>For example, you can create a potential well—a region of reduced potential energy where particles tend to accumulate
+    at sufficiently low temperatures.</p>
+<p>Another option is a potential barrier, a region of increased energy that makes it more difficult for particles to
+    move between different parts of the system.</p>
+<div class="instruction-image">
+    <p><b>Figure 3. Creating a Custom Graph</b></p><img src="instruction/en/CustomGraphApply.png"
+        alt="Custom potential energy graph" style="max-width: 100%; height: auto;">
+</div>
+<div class="instruction-note">
+    <p><b>Important!</b> The simulation will not start until potential energy has been defined. To start particle
+        motion, apply a preset graph or finish creating your own.</p>
+</div>
+<h3>1.3. Controlling Playback</h3>
+<p>After you define the potential energy, the simulation starts automatically.</p>
+<p>Use the <b>“Pause / Start”</b> button to control playback.</p>
+<ul>
+    <li><b>Pause</b> temporarily stops the simulation so you can examine the current particle positions and statistical
+        values.</li>
+    <li><b>Start</b> resumes the simulation after a pause.</li>
+</ul>
+<p>Pausing is especially useful in experiments where you need to capture and analyze a particular state of the system.
+</p>
+
+<h2>2. Program Interface</h2>
+<p>The workspace consists of several functional areas. Each displays particular physical characteristics or provides
+    controls for the simulation.</p>
+<div class="instruction-image">
+    <p><b>Figure 4. Simulation Interface Overview</b></p><img src="instruction/en/UI.png"
+        alt="Simulation interface overview" style="max-width: 100%; height: auto;">
+</div>
+<h3>2.1. Upper Graph — Potential Energy U(x)</h3>
+<p>The upper part of the visualization area displays the potential energy graph <b>U(x)</b>.</p>
+<p>The horizontal coordinate x indicates the particle's position in the system, while U(x) describes its potential
+    energy at that position.</p>
+<p>The shape of the graph determines the energy landscape in which particles move.</p>
+<p>The main features of this landscape are:</p>
+<ul>
+    <li><b>Potential well</b> — a region where potential energy is lower than in neighboring areas.</li>
+    <li><b>Potential barrier</b> — a region of increased potential energy that requires sufficient mechanical energy to
+        cross.</li>
+    <li><b>Horizontal section</b> — a region of constant potential energy where no force arises from the horizontal
+        potential gradient.</li>
+    <li><b>Sloped section</b> — a region where potential energy changes with position and a force acts on the particle
+        according to the derivative of potential energy.</li>
+</ul>
+<p>In one dimension, force and potential energy are related by:</p>
+<p class="formula">F(x) = −dU(x)/dx</p>
+<p>Thus, the force points in the direction of decreasing potential energy.</p>
+<div class="instruction-image">
+    <p><b>Figure 5. Example of a Potential Barrier</b></p><img src="instruction/en/BarrierGraph.png"
+        alt="Example of a potential barrier" style="max-width: 100%; height: auto;">
+</div>
+
+<h3>2.2. Particle Field — Motion Visualization</h3>
+<p>The central part of the interface is the field in which particles move.</p>
+<p>Each particle is displayed as a colored circle. Its position changes during the simulation according to the rules of
+    motion and interaction implemented in the program.</p>
+<h4>Speed Color Coding</h4>
+<p>A particle's color provides an approximate indication of its speed.</p>
+<ul>
+    <li><b>Light blue shades</b> indicate relatively slow particles.</li>
+    <li><b>Intermediate shades</b> indicate particles moving at moderate speeds.</li>
+    <li><b>Yellow and red shades</b> indicate the fastest particles.</li>
+</ul>
+<p>This color scale lets you observe differences in particle speeds and changes in their kinetic states.</p>
+<h4>Particle Field Background</h4>
+<p>The background color represents the spatial distribution of potential energy U(x).</p>
+<p>This allows you to compare particle positions with the energy landscape and observe how potential energy affects
+    their spatial distribution.</p>
+<h4>Center-of-Mass Line</h4>
+<p>The yellow vertical line indicates the horizontal position of the particle system's center of mass.</p>
+<p>If all particles have equal masses, the center-of-mass position is the arithmetic mean of their horizontal
+    coordinates:</p>
+<p class="formula">x<sub>cm</sub> = (1/N) Σ x<sub>i</sub></p>
+<p>Here, N is the total number of particles, and x<sub>i</sub> is the horizontal coordinate of the i-th particle.</p>
+<p>Changes in this line's position reveal shifts in the system's center of mass, for example when particles accumulate
+    in a particular region.</p>
+<div class="instruction-image">
+    <p><b>Figure 6. Particle Motion Field</b></p><img src="instruction/en/MainField.png" alt="Particle motion field"
+        style="max-width: 100%; height: auto;">
+</div>
+
+<h3>2.3. Lower Graph — Particle Distribution</h3>
+<p>The lower graph is intended for statistical analysis of the particles' spatial distribution.</p>
+<p>It displays both the experimental distribution obtained from the simulation and a theoretical curve based on the
+    Boltzmann distribution.</p>
+<h4>Experimental Histogram</h4>
+<p>The histogram shows how particles are distributed along the horizontal coordinate.</p>
+<p>To construct it, the space is divided into intervals. The number of particles in each interval is used to form the
+    experimental distribution.</p>
+<p>As particles move, the histogram changes to reflect the current state of the system.</p>
+<h4>Theoretical Boltzmann Curve</h4>
+<p>The theoretical curve describes the expected equilibrium distribution of particles in a potential field.</p>
+<p>In the arbitrary units used by the program, the relationship is:</p>
+<p class="formula">p(x) ∝ exp(−U(x)/T)</p>
+<p>where:</p>
+<ul>
+    <li><b>p(x)</b> is the probability density of finding a particle near position x;</li>
+    <li><b>U(x)</b> is the particle's potential energy at that position;</li>
+    <li><b>T</b> is the system's temperature parameter;</li>
+    <li><b>exp</b> is the exponential function.</li>
+</ul>
+<p>The normalized distribution can be written as:</p>
+<p class="formula">p(x) = exp(−U(x)/T) / Z</p>
+<p>where Z is the normalization factor:</p>
+<p class="formula">Z = ∫ exp(−U(x)/T) dx</p>
+<p>Integration is performed over the range of horizontal coordinates accessible to particles.</p>
+<p>The formula shows that regions of lower potential energy have a higher equilibrium probability of containing a
+    particle, all other conditions being equal.</p>
+<p>As temperature increases, differences in potential energy have a weaker effect on the distribution.</p>
+<p>Conversely, as temperature decreases, particles become more concentrated in energetically favorable regions.</p>
+<div class="instruction-note">
+    <p><b>Note.</b> The theoretical Boltzmann curve describes an equilibrium distribution. During transient processes,
+        in the presence of impermeable barriers, or when special particle-sorting rules are active, the experimental
+        histogram may differ significantly from this curve.</p>
+</div>
+<div class="instruction-image">
+    <p><b>Figure 7. Comparing Experimental and Theoretical Distributions</b></p><img src="instruction/en/hist.png"
+        alt="Histogram and theoretical Boltzmann curve" style="max-width: 100%; height: auto;">
+</div>
+
+<h3>2.4. Statistics Bar</h3>
+<p>The statistics bar displays the main quantitative characteristics of the system.</p>
+<p>It lets you monitor changes in physical quantities directly during the simulation.</p>
+<h4>Center of Mass</h4>
+<p>Displays the current horizontal coordinate of the particles' center of mass.</p>
+<p>This value allows you to quantify shifts in the particle distribution relative to its initial state.</p>
+<h4>Entropy</h4>
+<p>Entropy is used to characterize the spatial distribution of particles.</p>
+<p>The program uses the expression:</p>
+<p class="formula">S = −Σ p<sub>i</sub> ln(p<sub>i</sub>)</p>
+<p>where p<sub>i</sub> is the fraction of particles in the i-th spatial interval.</p>
+<p>The sum is taken over all histogram intervals. An empty interval contributes zero.</p>
+<p>This quantity represents the information entropy of the discrete spatial distribution.</p>
+<p>For a fixed number of equal-width intervals, a more uniform particle distribution generally corresponds to higher
+    entropy, while a strong concentration of particles in a small region corresponds to lower entropy.</p>
+<p>Note that this quantity characterizes the spatial distribution only; it is not the system's complete thermodynamic
+    entropy.</p>
+<h4>Temperature</h4>
+<p>Temperature characterizes the kinetic state of particles and is related to their average kinetic energy.</p>
+<p>During the simulation, its value helps you assess changes in the intensity of particle motion.</p>
+<h4>Particle Counts on Either Side of the Barrier</h4>
+<p>When a barrier is present, the program displays the number of particles to its left and right.</p>
+<p>These values are particularly useful for studying barrier permeability, directional particle transport, and Maxwell's
+    demon.</p>
+
+<h2>3. Configuring Simulation Parameters</h2>
+<p>The control panel lets you change the system's main parameters and investigate how different conditions affect
+    particle motion and distribution.</p>
+<div class="instruction-image">
+    <p><b>Figure 8. Simulation Parameters Panel</b></p><img src="instruction/en/panel.png"
+        alt="Simulation parameters panel" style="max-width: 100%; height: auto;">
+</div>
+<h3>3.1. Number of Particles</h3>
+<p>The <b>“Number of Particles”</b> parameter determines how many particles participate in the simulation.</p>
+<p>Increasing the number of particles lets you observe a larger system and obtain more statistically stable
+    distributions.</p>
+<p>With a small number of particles, random fluctuations in the histogram can be particularly noticeable.</p>
+<p>With more particles, the experimental distribution generally becomes smoother at equilibrium and reproduces the
+    expected statistical patterns more closely.</p>
+<p>However, increasing the number of particles also increases the computational load.</p>
+<h3>3.2. Particle Radius</h3>
+<p>The <b>“Radius”</b> parameter determines the geometric size of particles.</p>
+<p>It affects their visual appearance and their ability to pass through narrow openings and between obstacles.</p>
+<p>In particular, when using a porous barrier, a particle can pass through an opening only if its size allows it to fit.
+</p>
+<p>Changing the radius therefore lets you investigate how the permeability of geometric barriers depends on particle
+    size.</p>
+<h3>3.3. Temperature T</h3>
+<p>Temperature is one of the key simulation parameters.</p>
+<p>It is related to the particles' average kinetic energy and determines the nature of their thermal motion.</p>
+<p>As temperature increases, particles move faster on average, and the effect of potential barriers on their spatial
+    distribution becomes less pronounced.</p>
+<p>As temperature decreases, average speeds decrease and the relative influence of potential energy increases.</p>
+<p>At low temperatures, particles may become concentrated primarily in potential wells.</p>
+<p>Temperature also appears in the Boltzmann equilibrium distribution, so changing it directly affects the shape of the
+    theoretical curve.</p>
+<h3>3.4. Energy Scale</h3>
+<p>The <b>“Energy Scale”</b> parameter lets you change the relative magnitude of potential energy.</p>
+<p>It determines how strongly the chosen energy landscape affects particles compared with their characteristic thermal
+    energy.</p>
+<p>Increasing the energy scale:</p>
+<ul>
+    <li>Makes potential wells more energetically pronounced.</li>
+    <li>Strengthens the effect of potential barriers on particle motion.</li>
+    <li>May make the equilibrium distribution less uniform.</li>
+    <li>May increase particle concentration in regions of low potential energy.</li>
+</ul>
+<p>Decreasing the energy scale weakens the effect of the potential field and, all other conditions being equal, makes
+    the equilibrium distribution more uniform.</p>
+<p>The ratio of the characteristic potential energy to temperature is especially important for understanding system
+    behavior.</p>
+<p>Thus, changing the energy scale and changing the temperature can have similar effects on the equilibrium
+    distribution, although these operations have different physical meanings.</p>
+<h3>3.5. Redistributing Particles</h3>
+<p>The <b>“Redistribute”</b> button repositions particles according to the Boltzmann distribution.</p>
+<p>When this function is used, particle positions are generated based on the specified potential energy function and
+    temperature parameter.</p>
+<p>This allows you to obtain a spatial distribution corresponding to the selected theoretical relationship immediately,
+    without waiting for it to develop through particle motion.</p>
+<p>The feature is particularly useful for comparing different energy landscapes and temperature conditions.</p>
+
+<h2>4. Working with Barriers</h2>
+<p>The program allows you to place different types of barriers and obstacles in the particle field.</p>
+<p>They are intended for investigating particle reflection, restrictions on movement, geometric permeability, and
+    directional transport.</p>
+<h3>4.1. Selecting a Barrier Type</h3>
+<p>To configure an obstacle, find the <b>“Barrier”</b> group in the control panel.</p>
+<p>Here, you can select the required barrier type and adjust its parameters.</p>
+<p>The available options differ in geometry and in their rules of interaction with particles.</p>
+<h3>4.2. Changing the Barrier Position</h3>
+<p>You can change the barrier position in two ways.</p>
+<h4>Method 1. Numerical Input</h4>
+<p>Enter the desired coordinate in the corresponding numerical input field in the control panel.</p>
+<h4>Method 2. Dragging with the Mouse</h4>
+<ol>
+    <li>Move the mouse pointer over the red barrier line in the particle field.</li>
+    <li>Make sure the cursor changes to a horizontal double-headed arrow ↔.</li>
+    <li>Press the left mouse button.</li>
+    <li>Hold the button and drag the barrier to the desired position.</li>
+    <li>Release the mouse button to set the new position.</li>
+</ol>
+<p>Dragging allows you to change the geometry of the space accessible to particles while the model is running.</p>
+<div class="instruction-image">
+    <p><b>Figure 9. Moving the Barrier</b></p><img src="instruction/en/wall.png" alt="Moving the barrier"
+        style="max-width: 100%; height: auto;">
+</div>
+<h3>4.3. Solid Barrier</h3>
+<p>A <b>solid barrier</b> is an impermeable wall that completely divides the available space.</p>
+<p>Particles cannot pass freely through it and are reflected when they collide with it.</p>
+<p>This obstacle is suitable for investigating particle motion in confined regions, changes in distribution caused by a
+    moving wall, and mechanical interactions between a barrier and the particle system.</p>
+<h3>4.4. Porous Barrier</h3>
+<p>A <b>porous barrier</b> is a wall with three openings through which particles may pass.</p>
+<p>Whether a particle can pass depends on the geometric dimensions of the particle and the opening.</p>
+<p>If the particle fits through a pore, it can move to the other side of the barrier.</p>
+<p>If its size prevents it from passing through, it interacts with the obstacle.</p>
+<p>This mode lets you investigate how particle size affects the permeability of geometric barriers.</p>
+<h3>4.5. Scatterer Barrier</h3>
+<p>In <b>“Scatterers”</b> mode, arrays of geometric obstacles are used instead of a continuous wall.</p>
+<p>Depending on the selected configuration, the obstacles may be circular, elliptical, or triangular.</p>
+<p>Particles change their direction of motion when interacting with these objects.</p>
+<p>This allows you to observe complex trajectories and investigate how obstacle geometry affects particle transport.</p>
+<h4>Available Geometric Configurations</h4>
+<ul>
+    <li><b>Circles</b> — circular obstacles.</li>
+    <li><b>Ellipses</b> — elongated obstacles.</li>
+    <li><b>Triangles</b> — obstacles with straight edges and angular vertices.</li>
+</ul>
+<h4>Gradient Scatterer Systems</h4>
+<p>Additional special configurations are available:</p>
+<ul>
+    <li><b>“Gradient →”</b> — a system of five rows of circles with radii that change progressively from left to right.
+    </li>
+    <li><b>“Gradient ←”</b> — a system of five rows of circles with the opposite direction of radius variation.</li>
+</ul>
+<p>In these modes, obstacle geometry varies along the horizontal coordinate.</p>
+<p>This lets you investigate how spatial variations in obstacle geometry affect particle motion and distribution.</p>
+<div class="instruction-image">
+    <p><b>Figure 10. Examples of Scatterer Types</b></p><img src="instruction/en/circles.png" alt="Circular scatterers"
+        style="max-width: 100%; height: auto;"><img src="instruction/en/elips.png" alt="Elliptical scatterers"
+        style="max-width: 100%; height: auto;"><img src="instruction/en/elipsAngle.png"
+        alt="Angled elliptical scatterers" style="max-width: 100%; height: auto;"><img
+        src="instruction/en/complicated.png" alt="Complex scatterer configuration"
+        style="max-width: 100%; height: auto;">
+</div>
+<h3>4.6. Semipermeable Barrier</h3>
+<p>A <b>semipermeable barrier</b> uses a probabilistic mechanism to determine whether particles can pass through it.</p>
+<p>Each time a particle collides with the barrier, the program randomly determines whether it can cross.</p>
+<p>The transmission probability is specified by the user.</p>
+<p>Two parameters can be configured independently:</p>
+<ul>
+    <li><b>Left-to-right transmission probability</b> — the probability that a particle crosses from the left side of
+        the system to the right.</li>
+    <li><b>Right-to-left transmission probability</b> — the probability that a particle crosses from the right side to
+        the left.</li>
+</ul>
+<p>If the transmission probability is zero, passage in that direction is prohibited.</p>
+<p>If the probability is one, passage in that direction is always allowed.</p>
+<p>At intermediate values, the decision is made randomly at each collision.</p>
+<p>Different transmission probabilities in opposite directions allow you to simulate directional particle transport.</p>
+<p>For example, a higher left-to-right probability than right-to-left probability may cause particles to accumulate
+    preferentially on the right.</p>
+<h3>4.7. Work Performed by a Moving Barrier</h3>
+<p>When a barrier moves, interactions with particles may change their velocities.</p>
+<p>In the program, a moving barrier is treated as an infinitely massive wall.</p>
+<p>This means that collisions with particles do not change the barrier's motion, but the barrier's velocity can affect
+    the velocities of reflected particles.</p>
+<p>The <b>“Barrier Performs Work”</b> checkbox controls this effect.</p>
+<h4>Checkbox Enabled</h4>
+<p>The barrier's motion is taken into account during reflection.</p>
+<p>As a result, a particle may gain or lose kinetic energy depending on the direction of wall motion and the collision
+    conditions.</p>
+<p>For example, a wall moving toward a particle may increase its speed after reflection.</p>
+<h4>Checkbox Disabled</h4>
+<p>Reflection occurs as though the barrier were stationary.</p>
+<p>Thus, the wall's geometric position may change, but the additional velocity change caused by wall motion is not taken
+    into account.</p>
+<div class="instruction-note">
+    <p><b>Physical interpretation.</b> For an ideal elastic reflection from an infinitely massive wall moving
+        horizontally at velocity V, the particle's horizontal velocity after the collision is v<sub>x, after</sub> = 2V
+        − v<sub>x, before</sub>. For a stationary wall, V = 0, so the horizontal velocity component simply reverses
+        sign.</p>
+</div>
+
+<h2>5. Maxwell's Demon Mode</h2>
+<h3>5.1. Purpose of the Mode</h3>
+<p><b>“Maxwell's Demon”</b> mode is designed for experiments involving controlled particle transmission and reflection.
+</p>
+<p>It is based on the well-known thought experiment in statistical physics proposed by James Clerk Maxwell.</p>
+<p>In the classical thought experiment, a demon can observe individual molecules and selectively open or close a passage
+    between two compartments.</p>
+<p>In this way, the demon can sort molecules by a particular property, such as speed.</p>
+<p>In this program, users can control particle transmission manually or configure automatic sorting rules based on color
+    categories.</p>
+<p>The mode lets you investigate how selective control of particle movement affects their distribution between the two
+    parts of the system.</p>
+<h3>5.2. Activating the Mode</h3>
+<ol>
+    <li>Find the <b>“Mode”</b> drop-down menu at the top of the left control panel.</li>
+    <li>Open the list of available modes.</li>
+    <li>Select <b>“Maxwell's Demon”</b>.</li>
+</ol>
+<p>The program switches to a special mode for controlling particle interactions with the barrier.</p>
+<p>The barrier becomes a stationary line, and particles are displayed using one, two, or three color categories.</p>
+<p>These categories can be used to configure automatic transmission and reflection rules.</p>
+<div class="instruction-image">
+    <p><b>Figure 11. Maxwell's Demon Mode Interface</b></p><img src="instruction/en/daemon.png"
+        alt="Maxwell's demon interface" style="max-width: 100%; height: auto;">
+</div>
+<h3>5.3. Manual Particle Control</h3>
+<p>In Maxwell's Demon mode, users can decide individually whether particles should pass through the barrier.</p>
+<p>When a particle reaches the barrier and its subsequent motion is not determined by an automatic rule, the simulation
+    pauses.</p>
+<p>You must then choose one of two actions.</p>
+<h4>Action 1. Allow the Particle to Pass</h4>
+<p>To allow a particle to cross the barrier:</p>
+<ul>
+    <li>Click the <b>“Allow”</b> button in the interface.</li>
+    <li>Alternatively, press the <b>→</b> arrow key.</li>
+    <li>Or press the <b>Spacebar</b>.</li>
+</ul>
+<p>The particle will then be allowed to continue through the barrier.</p>
+<h4>Action 2. Reflect the Particle</h4>
+<p>To prevent the particle from crossing:</p>
+<ul>
+    <li>Click the <b>“Reflect”</b> button.</li>
+    <li>Alternatively, press the <b>←</b> arrow key.</li>
+    <li>Or press <b>Esc</b>.</li>
+</ul>
+<p>The particle is reflected and remains on its original side of the barrier.</p>
+<p>Using these actions, you can manually sort particles according to a chosen property.</p>
+<div class="instruction-image">
+    <p><b>Figure 12. Making a Decision in Maxwell's Demon Mode</b></p><img src="instruction/en/daemon.png"
+        alt="Maxwell's demon decision controls" style="max-width: 100%; height: auto;">
+</div>
+<h3>5.4. Automatic Rules</h3>
+<p>To reduce the need for manual actions, the program lets you create automatic particle transmission rules.</p>
+<p>Rules are configured separately for each color category.</p>
+<p>The following options are available for a selected color:</p>
+<h4>“Do Not Allow”</h4>
+<p>Particles in this color category are not automatically granted permission to cross the barrier.</p>
+<p>Their subsequent behavior is determined by the <b>“Otherwise”</b> setting.</p>
+<h4>“Allow →”</h4>
+<p>Particles of the selected color are automatically allowed to cross the barrier from left to right.</p>
+<p>When they attempt to cross in the opposite direction, the action specified under <b>“Otherwise”</b> is applied.</p>
+<h4>“Allow ←”</h4>
+<p>Particles of the selected color are automatically allowed to cross from right to left.</p>
+<p>When they attempt to cross from left to right, the action specified under <b>“Otherwise”</b> is applied.</p>
+<h4>“Always Allow”</h4>
+<p>Particles of the selected color category are automatically allowed to cross the barrier in both directions.</p>
+<p>This option is useful when a particular category should move freely between the two compartments.</p>
+<h3>5.5. Configuring the “Otherwise” Action</h3>
+<p>The <b>“Otherwise”</b> setting determines what happens when the selected automatic rule does not permit a particle to
+    cross.</p>
+<p>Two options are available.</p>
+<h4>“Ask”</h4>
+<p>The simulation pauses, and the user chooses whether to allow the particle to pass or reflect it.</p>
+<p>This option combines automatic control with manual decision-making.</p>
+<h4>“Reflect”</h4>
+<p>Particles that are not permitted to pass under the automatic rule are reflected without user intervention.</p>
+<p>This makes fully automatic particle sorting possible.</p>
+<div class="instruction-image">
+    <p><b>Figure 13. Configuring Automatic Rules</b></p><img src="instruction/en/demon1.png"
+        alt="Automatic rules for Maxwell's demon" style="max-width: 100%; height: auto;">
+</div>
+<h3>5.6. Example of Automatic Sorting</h3>
+<p>Consider an experiment intended to make particles of different colors accumulate on opposite sides of the barrier.
+</p>
+<p>Suppose the system uses two color categories.</p>
+<p>For the first category, select <b>“Allow →”</b>; for the second, select <b>“Allow ←”</b>.</p>
+<p>Then select <b>“Otherwise: Reflect”</b> for both categories.</p>
+<p>As a result:</p>
+<ul>
+    <li>Particles of the first category can cross from left to right but cannot return.</li>
+    <li>Particles of the second category can cross from right to left but cannot return to the right side.</li>
+</ul>
+<p>As the simulation progresses, particles of the first category may accumulate on the right, while particles of the
+    second category accumulate on the left.</p>
+<p>The process runs automatically and does not require a decision at every collision.</p>
+<p>You can assess the results by observing the spatial distribution and changes in the statistical indicators.</p>
+<div class="instruction-image">
+    <p><b>Figure 14. Automatic Particle Sorting</b></p><img src="instruction/en/demon1.png"
+        alt="Particle sorting configuration" style="max-width: 100%; height: auto;"><img src="instruction/en/demon2.png"
+        alt="Particle sorting results" style="max-width: 100%; height: auto;">
+</div>
+
+<h2>6. Recommendations for Conducting Experiments</h2>
+<p>For clear, interpretable results, follow several basic guidelines.</p>
+<h3>6.1. Change Parameters One at a Time</h3>
+<p>When investigating the effect of a particular parameter, try to keep all other settings unchanged.</p>
+<p>For example, if you are studying how temperature affects particle distribution, avoid changing the shape of the
+    potential energy function and the energy scale at the same time.</p>
+<p>This will help you identify the cause of the observed changes more accurately.</p>
+<h3>6.2. Account for Statistical Fluctuations</h3>
+<p>Individual particle motion and particle distributions may exhibit noticeable fluctuations.</p>
+<p>These fluctuations are particularly pronounced in systems containing relatively few particles.</p>
+<p>Therefore, a single instantaneous state does not always represent the system's typical behavior.</p>
+<p>For a more reliable assessment, observe the distribution over time or repeat the experiment.</p>
+<h3>6.3. Compare Experiment with Theory</h3>
+<p>The lower graph allows you to compare simulation results with the theoretical Boltzmann distribution.</p>
+<p>When analyzing the results, consider whether the system is in equilibrium and whether additional restrictions prevent
+    it from reaching the corresponding distribution.</p>
+<h3>6.4. Use Pause for Analysis</h3>
+<p>To examine a particular moment in detail, use the <b>“Pause / Start”</b> button.</p>
+<p>This is especially useful when observing particle interactions with barriers and comparing statistical indicators.
+</p>
+<h3>6.5. Record Your Results</h3>
+<p>When conducting a series of experiments, it is useful to record the main system parameters:</p>
+<ul>
+    <li>Number of particles.</li>
+    <li>Particle radius.</li>
+    <li>Temperature.</li>
+    <li>Potential energy scale.</li>
+    <li>Barrier type and position.</li>
+    <li>Particle transmission rules, if applicable.</li>
+</ul>
+<p>You can also save screenshots of the particle field, histogram, and statistics bar.</p>
+<p>This makes it easier to compare results and present your experiments as small research projects.</p>
+
+<h2>7. Troubleshooting</h2>
+<h3>7.1. The Simulation Does Not Start</h3>
+<p><b>Possible cause:</b> No potential energy has been defined.</p>
+<p><b>Solution:</b></p>
+<p>Select a preset graph and click <b>“Apply Preset”</b>, or create your own function and click <b>“Done / Apply”</b>.
+</p>
+<p>The simulation should start automatically once the potential energy has been applied.</p>
+<h3>7.2. Particles Have Stopped Moving</h3>
+<p><b>Possible cause:</b> The simulation is paused.</p>
+<p><b>Solution:</b></p>
+<p>Check the <b>“Pause / Start”</b> button and resume the simulation if necessary.</p>
+<p>If Maxwell's Demon mode is active, make sure the program is not waiting for a decision to allow or reflect a
+    particle.</p>
+<h3>7.3. Keyboard Controls Do Not Work</h3>
+<p><b>Possible cause:</b> Keyboard focus is in a numerical input field or another interface element.</p>
+<p><b>Solution:</b></p>
+<ol>
+    <li>Click an empty area of the particle field.</li>
+    <li>Press the desired key again.</li>
+    <li>If the problem persists, use the corresponding on-screen buttons.</li>
+</ol>
+<p>When a numerical input field is active, arrow keys may be interpreted as commands to change that field's value.</p>
+<h3>7.4. The Experimental Distribution Does Not Match the Theoretical Curve</h3>
+<p>Such a discrepancy does not necessarily indicate an error.</p>
+<p>Possible causes include:</p>
+<ul>
+    <li>The system has not yet reached equilibrium.</li>
+    <li>There are too few particles to produce a smooth histogram.</li>
+    <li>A barrier restricts the free movement of particles.</li>
+    <li>Special transmission or reflection rules are active.</li>
+    <li>Temporary statistical fluctuations are present.</li>
+</ul>
+<p>To investigate, observe the system for longer, increase the number of particles, or redistribute the particles
+    according to the Boltzmann distribution.</p>
+
+<h2>8. Returning to the Main Menu</h2>
+<p>To leave the simulation workspace, click <b>“Main Menu”</b>.</p>
+<p>The current simulation will close, and its settings will be reset.</p>
+<div class="instruction-note">
+    <p><b>Warning!</b> Before returning to the main menu, make sure you no longer need the current simulation parameters
+        or results. The system state is not saved when you exit, so you will need to configure the simulation again for
+        a new experiment.</p>
+</div>
+
+<h2>9. Conclusion</h2>
+<p>The interactive particle motion simulation provides a visual way to explore a wide range of phenomena in statistical
+    physics.</p>
+<p>Creating custom potential energy landscapes, controlling temperature and system geometry, using different types of
+    barriers, and conducting experiments with Maxwell's demon allow you to study physical principles not only
+    theoretically but also through direct observation of a model.</p>
+<p>One of the program's most valuable features is the ability to analyze both the motion of individual particles and the
+    statistical characteristics of the entire system.</p>
+<p>Comparing experimental distributions with theoretical relationships helps explain how the behavior of many particles
+    gives rise to macroscopic physical laws.</p>
+<p>The program can be used for independent study of statistical physics, educational experiments, demonstrations, and
+    small research projects.</p>

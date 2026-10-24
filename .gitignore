@@ -1,4 +1,6 @@
-venv/
+# CuPy / CUDA временные файлы (на всякий случай)
+cupy_cache/
+.cuda_cache/
 
 # Python
 __pycache__/
@@ -9,15 +11,26 @@ __pycache__/
 *.dll
 
 # Virtual environments
-venv/
-.env/
 .venv/
+venv/
 
-# Numba cache
-__pycache__/
-*.nbi
+# Packaging
+*.egg-info/
+dist/
+*.spec.bak
+
+# PyInstaller
+build/
+releases/
+
+# Numba
 *.nbc
+*.nbi
 
-# CuPy / CUDA временные файлы (на всякий случай)
-cupy_cache/
-.cuda_cache/
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
