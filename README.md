@@ -15,6 +15,8 @@
 
 - Python 3.11 или новее.
 - Зависимости из pyproject.toml.
+- Для Windows-сборки с Qt WebEngine требуется Windows 10 версии 1809 или новее.
+  Windows 7 не поддерживается.
 
 ## Установка
 

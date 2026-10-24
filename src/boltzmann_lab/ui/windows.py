@@ -14,8 +14,12 @@ from PyQt6.QtGui import (
     QShortcut,
     QPainter, 
     QPixmap, 
-    QColor
+    QColor,
+    QDesktopServices,
 )
+
+from PyQt6.QtWebEngineCore import QWebEnginePage
+from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from boltzmann_lab.core.simulation import (
     TemperatureLimitExceeded,
@@ -40,7 +44,6 @@ from PyQt6.QtWidgets import (
     QWidget,
     QCheckBox,
     QStackedWidget,
-    QTextBrowser,
 )
 
 from boltzmann_lab.core.config import (
@@ -1544,6 +1547,27 @@ class InfoPage(QWidget):
 
     menuRequested = pyqtSignal()
 
+    class ExternalLinksPage(QWebEnginePage):
+        def acceptNavigationRequest(
+            self,
+            url,
+            navigation_type,
+            is_main_frame,
+        ):
+            if (
+                navigation_type
+                == QWebEnginePage.NavigationType.NavigationTypeLinkClicked
+                and url.scheme() in ("http", "https")
+            ):
+                QDesktopServices.openUrl(url)
+                return False
+
+            return super().acceptNavigationRequest(
+                url,
+                navigation_type,
+                is_main_frame,
+            )
+
     def __init__(self, html_by_language):
         super().__init__()
 
@@ -1563,21 +1587,17 @@ class InfoPage(QWidget):
 
         layout.addLayout(top)
 
-        self.browser = QTextBrowser()
-        self.browser.setOpenExternalLinks(True)
+        self.browser = QWebEngineView()
+        self.browser.setPage(self.ExternalLinksPage(self.browser))
         images_path = resource_path("images").resolve()
-        self.browser.document().setBaseUrl(
+        self.base_url = (
             QUrl.fromLocalFile(str(images_path) + "/")
         )
         self.browser.setStyleSheet(
             """
-            QTextBrowser {
-                background: white;
-                color: #0f172a;
+            QWebEngineView {
                 border: 1px solid #cbd5e1;
                 border-radius: 6px;
-                padding: 12px;
-                font-size: 14px;
             }
             """
         )
@@ -1586,7 +1606,10 @@ class InfoPage(QWidget):
 
     def set_language(self, language):
         self.menu_button.setText(MENU_TEXT[language]["main_menu"])
-        self.browser.setHtml(self.html_by_language[language])
+        self.browser.setHtml(
+            self.html_by_language[language],
+            self.base_url,
+        )
 
 class BackgroundPage(QWidget):
     """Страница, которая рисует картинку на фоне."""
