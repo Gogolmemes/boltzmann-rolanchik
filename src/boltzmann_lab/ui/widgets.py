@@ -2,9 +2,41 @@ import numpy as np
 import pyqtgraph as pg
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QLabel
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import QLabel, QVBoxLayout
 
 from boltzmann_lab.core.config import POTENTIAL_POINTS
+from boltzmann_lab.ui.theme import PLOT_BACKGROUND, contrast_text_color
+
+
+def fit_window_to_screen(window):
+    """Размеры в логических пикселях Qt с учётом рабочей области экрана."""
+    available = window.screen().availableGeometry()
+    window.setMinimumSize(min(640, int(available.width() * 0.8)),
+                          min(420, int(available.height() * 0.8)))
+    window.resize(min(1600, int(available.width() * 0.9)),
+                  min(1000, int(available.height() * 0.9)))
+    window.move(available.center() - window.rect().center())
+
+
+class PlotLayout(QVBoxLayout):
+    """Учитывает перенос текста, позволяя графикам сжиматься до минимума."""
+
+    def heightForWidth(self, width):
+        # Обычный QBoxLayout складывает желаемые высоты графиков.
+        # Для QScrollArea нужна минимальная высота при данной ширине.
+        margins = self.contentsMargins()
+        inner_width = max(0, width - margins.left() - margins.right())
+        items = [self.itemAt(i) for i in range(self.count())]
+        items = [item for item in items if not item.isEmpty()]
+        height = margins.top() + margins.bottom()
+        for item in items:
+            minimum = item.minimumSize().height()
+            widget = item.widget()
+            if widget is not None and widget.hasHeightForWidth():
+                minimum = max(minimum, widget.heightForWidth(inner_width))
+            height += minimum
+        return height + max(0, len(items) - 1) * max(0, self.spacing())
 
 
 class ParticleView(QLabel):
@@ -78,12 +110,55 @@ class ParticleView(QLabel):
 
         super().mouseReleaseEvent(event)
 
-class PotentialPlot(pg.PlotWidget):
+class PresentationPlot(pg.PlotWidget):
+    """Large graph labels whose colors follow the actual graph background."""
+
+    def __init__(self):
+        super().__init__(background=PLOT_BACKGROUND)
+        self.setBackground(PLOT_BACKGROUND)
+
+    def setBackground(self, background):
+        super().setBackground(background)
+        if self.plotItem is None:
+            return
+        color = contrast_text_color(self.backgroundBrush().color())
+        tick_font = QFont("Segoe UI", 16, QFont.Weight.Bold)
+        for name in ("left", "bottom", "right", "top"):
+            axis = self.plotItem.getAxis(name)
+            axis.setPen(pg.mkPen(color, width=2))
+            axis.setTextPen(color)
+            axis.setTickFont(tick_font)
+            axis.setStyle(tickTextOffset=10)
+            axis.setLabel(axis.labelText, units=axis.labelUnits,
+                          **{"color": color.name(), "font-size": "18pt", "font-weight": "700"})
+        self._style_legend()
+
+    def addLegend(self, **kwargs):
+        legend = self.plotItem.addLegend(**kwargs)
+        self._style_legend()
+        return legend
+
+    def _style_legend(self):
+        legend = self.plotItem.legend
+        if legend is None:
+            return
+        background = self.backgroundBrush().color()
+        color = contrast_text_color(background)
+        legend.setBrush(pg.mkBrush(background))
+        legend.setPen(pg.mkPen(color, width=2))
+        legend.setLabelTextColor(color)
+        legend.setLabelTextSize("16pt")
+        for _, label in legend.items:
+            label.setAttr("bold", True)
+
+
+class PotentialPlot(PresentationPlot):
     """
     График PyQtGraph, на котором пользователь рисует U(x) мышкой.
     """
 
     drawingChanged = pyqtSignal()
+    positionSelected = pyqtSignal(float)
 
     def __init__(self):
         super().__init__()
@@ -110,13 +185,13 @@ class PotentialPlot(pg.PlotWidget):
         self.applied_curve = self.plot(
             [],
             [],
-            pen=pg.mkPen("#34d399", width=3),
+            pen=pg.mkPen("#34d399", width=4),
         )
 
         self.draft_curve = self.plot(
             [],
             [],
-            pen=pg.mkPen("#fbbf24", width=3),
+            pen=pg.mkPen("#fbbf24", width=4),
         )
 
     def begin_new(self):
@@ -175,6 +250,12 @@ class PotentialPlot(pg.PlotWidget):
         )
 
     def mousePressEvent(self, event):
+        if not self.drawing_enabled and event.button() == Qt.MouseButton.LeftButton:
+            point = self._event_to_data(event)
+            if point is not None:
+                self.positionSelected.emit(point[0])
+                event.accept()
+                return
         if (
             self.drawing_enabled
             and event.button() == Qt.MouseButton.LeftButton

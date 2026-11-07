@@ -150,7 +150,7 @@ class ParticleRendererMixin:
         pys = (sim.positions[:, 1] * (FIELD_HEIGHT / WORLD_H)).astype(int).tolist()
 
         if sim.demon_mode and len(sim.colors) == sim.n:
-            colors = [DEMON_COLORS[c] for c in sim.colors.tolist()]
+            colors = [DEMON_COLORS[c] for c in sim.particle_color_indices().tolist()]
         else:
             speeds = np.linalg.norm(sim.velocities, axis=1)
             ratio = np.clip(speeds / reference_speed, 0.0, 1.0)
@@ -161,7 +161,8 @@ class ParticleRendererMixin:
 
             colors = list(zip(red.tolist(), green.tolist(), blue.tolist()))
 
-        radius_px = sim.radius_px
+        # Games may magnify markers for a projector without changing collision radii.
+        radius_px = getattr(self, "particle_draw_radius_px", sim.radius_px)
 
         for px, py, color in zip(pxs, pys, colors):
             pygame.draw.circle(surface, color, (px, py), radius_px)

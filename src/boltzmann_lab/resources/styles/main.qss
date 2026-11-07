@@ -1,28 +1,74 @@
-QMainWindow {
+QWidget {
+    font-weight: 600;
+    color: #0f172a;
+}
+QMainWindow, QScrollArea, QScrollArea > QWidget > QWidget {
     background: #f8fafc;
 }
-
 QGroupBox {
-    font-weight: bold;
-    border: 1px solid #cbd5e1;
-    border-radius: 7px;
-    margin-top: 10px;
-    padding-top: 8px;
+    font-weight: 800;
+    border: 2px solid #64748b;
+    border-radius: 10px;
+    margin-top: 18px;
+    padding: 18px 10px 10px;
+    background: #ffffff;
 }
-
 QGroupBox::title {
     subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 4px;
+    left: 12px;
+    padding: 0 6px;
+    color: #0f172a;
+    background: #ffffff;
 }
-
-QPushButton {
-    min-height: 28px;
-    padding: 3px 8px;
+QPushButton, QToolButton {
+    min-height: 44px;
+    padding: 8px 12px;
+    font-weight: 700;
+    border: 2px solid #64748b;
+    border-radius: 7px;
+    background: #e2e8f0;
+    color: #0f172a;
 }
-
-QSpinBox,
-QDoubleSpinBox,
-QComboBox {
-    min-height: 25px;
+QPushButton:hover, QToolButton:hover {
+    background: #cbd5e1;
+    border-color: #1e40af;
 }
+QPushButton:pressed, QToolButton:pressed, QToolButton:checked {
+    background: #dbeafe;
+    border-color: #1e40af;
+}
+QPushButton:disabled, QToolButton:disabled {
+    background: #e2e8f0;
+    color: #475569;
+    border-color: #94a3b8;
+}
+QPushButton:focus, QToolButton:focus, QComboBox:focus, QAbstractSpinBox:focus {
+    border: 3px solid #1d4ed8;
+}
+QSpinBox, QDoubleSpinBox, QComboBox {
+    min-height: 42px;
+    padding: 5px 8px;
+    border: 2px solid #64748b;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #0f172a;
+    selection-background-color: #1e40af;
+    selection-color: #ffffff;
+}
+QComboBox::drop-down { width: 30px; }
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button { width: 26px; }
+QComboBox QAbstractItemView {
+    background: #ffffff;
+    color: #0f172a;
+    selection-background-color: #1e40af;
+    selection-color: #ffffff;
+    padding: 6px;
+}
+QCheckBox { spacing: 12px; min-height: 42px; }
+QCheckBox::indicator { width: 28px; height: 28px; }
+QSplitter::handle { background: #94a3b8; width: 8px; }
+QSplitter::handle:hover { background: #1d4ed8; }
+QScrollBar:vertical { width: 22px; background: #e2e8f0; }
+QScrollBar:horizontal { height: 22px; background: #e2e8f0; }
+QScrollBar::handle { background: #64748b; border-radius: 5px; min-height: 32px; min-width: 32px; }
+QToolTip { background: #ffffff; color: #0f172a; border: 2px solid #475569; padding: 10px; }
