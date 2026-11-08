@@ -219,15 +219,12 @@ class ParticleRendererMixin:
 
         pixmap = QPixmap.fromImage(image)
 
-        target_size = (
-            self.particle_view.size()
-        )
-
-        pixmap = pixmap.scaled(
-            target_size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
+        if not self.particle_view.hasHeightForWidth():
+            pixmap = pixmap.scaled(
+                self.particle_view.contentsRect().size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
 
         self.particle_view.setPixmap(
             pixmap

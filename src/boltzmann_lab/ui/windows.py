@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (  # Импорт виджетов интерфей�
     QApplication, QComboBox, QDoubleSpinBox, QFormLayout, QFrame,
     QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
     QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget, QCheckBox,
-    QStackedWidget, QSplitter, QToolButton,
+    QStackedWidget, QSplitter,
 )
 
 from boltzmann_lab.core.config import (  # Импорт констант
@@ -35,7 +35,8 @@ from boltzmann_lab.core.config import (  # Импорт констант
 from boltzmann_lab.core.simulation import BoltzmannSimulation  # Импорт симуляции
 
 from boltzmann_lab.ui.widgets import (  # Импорт виджетов (график и поле)
-    ParticleView, PotentialPlot, PlotLayout, PresentationPlot, fit_window_to_screen,
+    CollapsiblePlotHeader, ParticleFieldView, PotentialPlot, PlotLayout, PresentationPlot,
+    fit_window_to_screen,
 )
 
 from boltzmann_lab.ui.theme import DEMON_TEXT_COLORS, presentation_document
@@ -86,15 +87,11 @@ DIST_TEXT = {  # Тексты для нижнего графика и стати
         "bins": "бинов",
         "few": "Мало частиц: гистограмма грубая, увеличьте число частиц",
         "density": "Плотность<br>вероятности",
-        "mean_u": "Uср",      # <-- Добавили
-        "free_f": "F",        # <-- Добавили
     },
     "en": {
         "bins": "bins",
         "few": "Few particles: the histogram is coarse, increase the particle count",
         "density": "Probability<br>density",
-        "mean_u": "Mean U",      # <-- Добавили
-        "free_f": "F",        # <-- Добавили
     },
 }
 
@@ -441,7 +438,12 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         self.controls_layout.addStretch(1)  # Прижимает всё вверх
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_splitter.setChildrenCollapsible(False)
-        self.main_splitter.addWidget(self.controls_scroll)
+        self.controls_column = QWidget()
+        controls_column_layout = QVBoxLayout(self.controls_column)
+        controls_column_layout.setContentsMargins(0, 0, 0, 0)
+        controls_column_layout.setSpacing(6)
+        controls_column_layout.addWidget(self.controls_scroll, 1)
+        self.main_splitter.addWidget(self.controls_column)
         main_layout.addWidget(self.main_splitter)
 
         # ПРАВАЯ ЧАСТЬ (графики и поле)
@@ -450,39 +452,29 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(5)
 
-        # Заголовок "Потенциальная энергия"
-        self.potential_title = QToolButton()
-        self.potential_title.setCheckable(True)
-        self.potential_title.setChecked(True)
-        self.potential_title.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.potential_title.setArrowType(Qt.ArrowType.DownArrow)
-        self.potential_title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.potential_title.setStyleSheet("font-size: 22pt; font-weight: 800; color: #0f172a;")
-        right_layout.addWidget(self.potential_title)
-
         # Сам график потенциала
         self.potential_plot = PotentialPlot()
         self.potential_plot.setMinimumSize(160, 120)
+        self.potential_plot.hideAxis("left")
+        self.potential_plot.hideAxis("bottom")
+        # Keep a drawing guide independently of the hidden axes.
+        potential_grid = pg.GridItem(pen=pg.mkPen("#64748b"), textPen=None)
+        potential_grid.setZValue(-10)
+        self.potential_plot.addItem(potential_grid, ignoreBounds=True)
+        self.potential_title = CollapsiblePlotHeader(self.potential_plot)
+        right_layout.addWidget(self.potential_title)
         right_layout.addWidget(self.potential_plot, 2)
 
-        # Заголовок "Движение частиц"
-        self.particle_title = QLabel()
-        self.particle_title.setStyleSheet("font-size: 22pt; font-weight: 800; color: #0f172a;")
-        right_layout.addWidget(self.particle_title)
-
         # Поле с частицами
-        self.particle_view = ParticleView()
-        self.particle_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.particle_view.setMinimumSize(160, 140)
-        # Размер QLabel не должен зависеть от последнего отрисованного pixmap.
-        self.particle_view.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self.particle_view = ParticleFieldView()
         self.particle_view.setStyleSheet("""
             QLabel {
                 background: #020617;
                 border: 1px solid #334155;
             }
         """)
-        right_layout.addWidget(self.particle_view, 3)
+        # Reserve the vessel's full aspect ratio before stretching the plots.
+        right_layout.addWidget(self.particle_view, 0, Qt.AlignmentFlag.AlignTop)
 
         # Панель Демона (появляется в режиме Демона)
         self.demon_panel = QFrame()
@@ -495,6 +487,8 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
             }
         """)
         demon_panel_layout = QVBoxLayout(self.demon_panel)
+        demon_panel_layout.setContentsMargins(6, 6, 6, 6)
+        demon_panel_layout.setSpacing(4)
         self.demon_label = QLabel()
         self.demon_label.setStyleSheet("color: #0f172a; font-weight: bold;")
         self.demon_label.setWordWrap(True)
@@ -505,9 +499,10 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             button.setMinimumWidth(0)
         demon_panel_layout.addWidget(self.demon_label)
-        demon_buttons = QHBoxLayout()
-        demon_buttons.addWidget(self.demon_pass_button)
-        demon_buttons.addWidget(self.demon_reflect_button)
+        demon_buttons = QFormLayout()
+        demon_buttons.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        demon_buttons.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        demon_buttons.addRow(self.demon_pass_button, self.demon_reflect_button)
         demon_panel_layout.addLayout(demon_buttons)
         self.demon_panel.setVisible(False)
         right_layout.addWidget(self.demon_panel)
@@ -520,21 +515,13 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(lambda v=value: self.demon_decide(v))
 
-        # Заголовок "Распределение вероятностей"
-        self.distribution_title = QToolButton()
-        self.distribution_title.setCheckable(True)
-        self.distribution_title.setChecked(True)
-        self.distribution_title.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.distribution_title.setArrowType(Qt.ArrowType.DownArrow)
-        self.distribution_title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.distribution_title.setStyleSheet("font-size: 22pt; font-weight: 800; color: #0f172a;")
-        right_layout.addWidget(self.distribution_title)
-
         # Нижний график (гистограмма + теория)
         self.distribution_plot = PresentationPlot()
         self.distribution_plot.setBackground("#0b1220")
-        self.distribution_plot.setMinimumSize(160, 240)
+        self.distribution_plot.setMinimumSize(160, 160)
         self.distribution_plot.getAxis("left").setStyle(showValues=False)
+        # Both data areas span the same width; the bottom axis is shared visually.
+        self.distribution_plot.hideAxis("left")
         self.distribution_plot.showGrid(x=True, y=True, alpha=0.20)
         self.distribution_plot.setXRange(0.0, 1.0, padding=0)
         self.distribution_plot.setYRange(0.0, 2.0, padding=0)
@@ -560,32 +547,25 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
             pen=pg.mkPen("#fb7185", width=4),
         )
 
+        self.distribution_title = CollapsiblePlotHeader(self.distribution_plot)
+        right_layout.addWidget(self.distribution_title)
         right_layout.addWidget(self.distribution_plot, 2)
 
-        # Статистика внизу (центр масс, энтропия, температура)
+        # Keep live readings visible while the settings above them scroll.
+        self.statistics_group = QGroupBox()
+        statistics_layout = QVBoxLayout(self.statistics_group)
+        statistics_layout.setContentsMargins(8, 12, 8, 6)
+        statistics_layout.setSpacing(4)
         self.stats_label = QLabel()
         self.stats_label.setWordWrap(True)
-        self.stats_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.stats_label.setStyleSheet("""
-            QLabel {
-                font-size: 18pt;
-                font-weight: 750;
-                color: #0f172a;
-                background: #e2e8f0;
-                border: 2px solid #64748b;
-                border-radius: 8px;
-                padding: 12px;
-            }
-        """)
-        right_layout.addWidget(self.stats_label)
-
-        self.free_energy_title = QToolButton()
-        self.free_energy_title.setCheckable(True)
-        self.free_energy_title.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.free_energy_title.setArrowType(Qt.ArrowType.RightArrow)
-        self.free_energy_title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.free_energy_title.setStyleSheet("font-size: 22pt; font-weight: 800; color: #0f172a;")
-        right_layout.addWidget(self.free_energy_title)
+        self.stats_label.setTextFormat(Qt.TextFormat.RichText)
+        self.stats_label.setStyleSheet("font-size: 18pt; font-weight: 750;")
+        statistics_layout.addWidget(self.stats_label)
+        self.histogram_warning_label = QLabel()
+        self.histogram_warning_label.setWordWrap(True)
+        self.histogram_warning_label.setStyleSheet("color: #92400e;")
+        statistics_layout.addWidget(self.histogram_warning_label)
+        controls_column_layout.addWidget(self.statistics_group)
 
         self.free_energy_plot = PresentationPlot()
         self.free_energy_plot.setMinimumSize(160, 180)
@@ -600,8 +580,9 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
             size=10, pen=pg.mkPen("#0b1220", width=2), brush=pg.mkBrush("#fbbf24"),
         )
         self.free_energy_plot.addItem(self.free_energy_current)
-        self.free_energy_plot.hide()
-        right_layout.addWidget(self.free_energy_plot, 2)
+        self.free_energy_title = CollapsiblePlotHeader(self.free_energy_plot, expanded=False)
+        right_layout.insertWidget(1, self.free_energy_title)
+        right_layout.insertWidget(3, self.free_energy_plot, 2)
 
         self.plots_scroll = QScrollArea()
         self.plots_scroll.setWidgetResizable(True)
@@ -624,23 +605,21 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         super().showEvent(event)
         if not self._splitter_initialized:
             width = self.main_splitter.width()
-            controls_width = min(580, max(360, int(width * 0.32)))
+            controls_width = min(520, max(340, int(width * 0.30)))
             self.main_splitter.setSizes([controls_width, max(180, width - controls_width)])
             self._splitter_initialized = True
 
     def toggle_potential_plot(self, expanded):
-        self.potential_plot.setVisible(expanded)
-        self.potential_title.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        if expanded:
+            self.free_energy_title.setChecked(False)
 
     def toggle_distribution_plot(self, expanded):
-        self.distribution_plot.setVisible(expanded)
-        self.distribution_title.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
         if expanded:
             self.update_distribution()
 
     def toggle_free_energy_plot(self, expanded):
-        self.free_energy_plot.setVisible(expanded)
-        self.free_energy_title.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        if expanded:
+            self.potential_title.setChecked(False)
         self.update_statistics()
         if expanded:
             self._update_free_energy_plot()
@@ -777,15 +756,13 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         ]
         for i, name in enumerate(barrier_names):
             self.barrier_combo.setItemText(i, name)
+        self.statistics_group.setTitle(self.tr("statistics_group"))
         self.potential_title.setText(self.tr("potential_title"))
-        self.particle_title.setText(self.tr("particle_title"))
         self.distribution_title.setText(self.tr("distribution_title"))
         self.free_energy_title.setText(self.tr("free_energy_title"))
+        for header in (self.potential_title, self.distribution_title, self.free_energy_title):
+            header.setCollapseText(self.tr("collapse_plot"))
         self.free_energy_plot.setLabel("bottom", self.tr("simulation_time"))
-        self.potential_plot.setLabel("bottom", "")
-        self.potential_plot.setLabel("left", "")
-        self.distribution_plot.setLabel("bottom", "")
-        self.distribution_plot.setLabel("left", "")
         shape_names = [
             self.tr("shape_circle"), self.tr("shape_ellipse"),
             self.tr("shape_triangle"), self.tr("shape_mixed"),
@@ -830,8 +807,8 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
                 combo.setItemText(i, self.tr(key))
         for label in self.else_labels + self.speed_else_labels:
             label.setText(self.tr("else_label"))
-        self.demon_pass_button.setText(self.tr("demon_pass"))
-        self.demon_reflect_button.setText(self.tr("demon_reflect"))
+        self.demon_pass_button.setText(self.tr("demon_pass").replace(" (", "\n("))
+        self.demon_reflect_button.setText(self.tr("demon_reflect").replace(" (", "\n("))
         # QComboBox кеширует sizeHint до перевода пустых пунктов. Явный минимум
         # сохраняет конец надписи со стрелкой и заставляет QFormLayout переносить ряд.
         for combo in self.controls_scroll.widget().findChildren(QComboBox):
@@ -1111,11 +1088,9 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
             width=0.85 / bins,
         )
         self.theory_curve.setData(theory_x, density_th)
-        maximum = max(
-            float(np.max(density_exp)),
-            float(np.max(density_th)),
-            0.5,
-        )
+        # Keep the reference curve visually stable as experimental counts fluctuate.
+        # Taller histogram bars are clipped to the plot instead of changing its scale.
+        maximum = max(float(np.max(density_th)), 0.5)
         self.distribution_plot.setYRange(0.0, maximum * 1.25, padding=0)
 
     def _reset_distribution_plot(self):  # Пустая гистограмма нужного размера
@@ -1138,17 +1113,22 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         free_f = self.sim.free_energy()
 
         text_pack = DIST_TEXT[self.language]
-        text = (
-            f"{self.tr('com')}: {com:.3f} | "
-            f"{self.tr('entropy')}: {entropy:.4f} | "
-            f"T = {temp:.4f} | "
-            f"{text_pack['mean_u']} = {mean_u:.3f}"
-        )
+        rows = [
+            (f"{self.tr('com')}:", f"{com:.3f}"),
+            (f"{self.tr('entropy')}:", f"{entropy:.4f}"),
+            (f"{self.tr('effective_temperature')}:", f"{temp:.4f}"),
+            (f"{self.tr('mean_potential_energy')}:", f"{mean_u:.3f}"),
+        ]
         if not self.free_energy_title.isChecked():
-            text += f" | {text_pack['free_f']} = {free_f:.3f}"
-        if self.sim.n < MIN_PARTICLES_FOR_HIST:
-            text += f"\n{text_pack['few']}"
-        self.stats_label.setText(text)
+            rows.append((f"{self.tr('free_energy')}:", f"{free_f:.3f}"))
+        self.stats_label.setText(
+            '<table width="100%" cellspacing="0" cellpadding="0">'
+            + ''.join(f'<tr><td>{name}</td><td align="right" style="white-space: nowrap">{value}</td></tr>'
+                      for name, value in rows)
+            + '</table>'
+        )
+        self.histogram_warning_label.setText(text_pack['few'])
+        self.histogram_warning_label.setVisible(self.sim.n < MIN_PARTICLES_FOR_HIST)
 
     def shutdown(self):  # Остановка таймера
         if hasattr(self, "timer"):

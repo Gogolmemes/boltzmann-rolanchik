@@ -1034,57 +1034,7 @@ class BoltzmannSimulation:
             )
         )
 
-        # Если перегородка сплошная, число частиц
-        # с каждой стороны сохраняется.
-        # Поэтому нормируем теорию отдельно по двум областям.
-        if self.barrier_mode in (1, 4):
-            barrier = self.barrier_fraction
-
-            left_mask = centers < barrier
-            right_mask = ~left_mask
-
-            current_left = float(
-                np.mean(self.positions[:, 0] < self.barrier_x)
-            )
-
-            if self.barrier_mode == 4:
-                # Стационарное состояние: потоки через стенку равны,
-                # N_L p_LR / Z_L = N_R p_RL / Z_R.
-                zl = float(np.sum(weights[left_mask]))
-                zr = float(np.sum(weights[right_mask]))
-
-                a = self.p_rl * zl
-                b = self.p_lr * zr
-
-                if a + b > 0.0:
-                    current_left = a / (a + b)
-
-            current_right = 1.0 - current_left
-
-            result = np.zeros_like(weights)
-
-            if np.any(left_mask):
-                left_weights = weights[left_mask]
-
-                if np.sum(left_weights) > 0:
-                    result[left_mask] = (
-                        current_left
-                        * left_weights
-                        / np.sum(left_weights)
-                    )
-
-            if np.any(right_mask):
-                right_weights = weights[right_mask]
-
-                if np.sum(right_weights) > 0:
-                    result[right_mask] = (
-                        current_right
-                        * right_weights
-                        / np.sum(right_weights)
-                    )
-
-            return centers, result
-
+        # Reference equilibrium ignores partitions; their effects appear in the histogram.
         total = np.sum(weights)
 
         if total <= 0:

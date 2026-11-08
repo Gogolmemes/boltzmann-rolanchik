@@ -9,7 +9,7 @@ from PyQt6.QtCore import QPointF, Qt, pyqtSignal
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QApplication, QWidget, QStyle, QStyleOptionComboBox
 
-from boltzmann_lab.core.config import DT, FPS
+from boltzmann_lab.core.config import DT, FIELD_HEIGHT, FIELD_WIDTH, FPS
 from boltzmann_lab.ui.windows import AppWindow, MainWindow
 from boltzmann_lab.ui.theme import apply_presentation_theme, relative_luminance
 
@@ -88,6 +88,43 @@ class InterfaceTests(unittest.TestCase):
                 a, b = relative_luminance(expected), relative_luminance(background)
                 self.assertGreater((max(a, b) + 0.05) / (min(a, b) + 0.05), 7)
 
+    def test_boltzmann_reference_is_independent_of_partitions(self):
+        w = self.window
+        w.update_distribution()
+        theory = w.theory_curve.yData.tolist()
+        scale = w.distribution_plot.viewRange()[1].copy()
+        for mode in range(6):
+            for fraction in (0.1, 0.5, 0.9):
+                for position in (fraction / 2, (1 + fraction) / 2):
+                    with self.subTest(mode=mode, fraction=fraction, position=position):
+                        w.sim.barrier_mode = mode
+                        w.sim.barrier_fraction = fraction
+                        w.sim.p_lr, w.sim.p_rl = 0.0, 1.0
+                        w.sim.positions[:, 0] = position
+                        w.update_distribution()
+                        self.assertEqual(w.theory_curve.yData.tolist(), theory)
+                        self.assertEqual(w.distribution_plot.viewRange()[1], scale)
+
+    def test_compression_increases_bars_without_rescaling_the_reference(self):
+        w = self.window
+        w.set_new_potential([0.0, 0.0])
+        w.sim.positions[:, 0] = [(i + 0.5) / w.sim.n for i in range(w.sim.n)]
+        w.update_distribution()
+        initial_peak = max(w.histogram_bars.opts["height"])
+        theory = w.theory_curve.yData.tolist()
+        scale = w.distribution_plot.viewRange()[1].copy()
+        w.sim.barrier_mode = 1
+        w.sim.barrier_fraction = 0.1
+        w.sim.positions[:, 0] = [0.02 + 0.06 * (i + 0.5) / w.sim.n
+                                 for i in range(w.sim.n)]
+        w.update_distribution()
+        heights = w.histogram_bars.opts["height"]
+        self.assertGreater(max(heights), initial_peak * 5)
+        self.assertAlmostEqual(sum(heights) / w.bins, 1.0)
+        self.assertEqual(w.theory_curve.yData.tolist(), theory)
+        self.assertEqual(w.distribution_plot.viewRange()[1], scale)
+        self.assertFalse(w.distribution_plot.getAxis("left").style["showValues"])
+
     def test_free_energy_history_collects_while_hidden_and_keeps_model_time(self):
         self.assertTrue(self.window.free_energy_plot.isHidden())
         self.assertEqual(self.window.free_energy_times, [0.0])
@@ -102,14 +139,14 @@ class InterfaceTests(unittest.TestCase):
         times = list(self.window.free_energy_times)
         self.window.free_energy_title.setChecked(True)
         self.assertFalse(self.window.free_energy_plot.isHidden())
-        self.assertNotIn("F =", self.window.stats_label.text())
+        self.assertNotIn(self.window.tr("free_energy") + ":", self.window.stats_label.text())
         self.assertEqual(list(self.window.free_energy_curve.xData), times)
         self.assertEqual(list(self.window.free_energy_curve.yData), self.window.free_energy_values)
         for language in ("en", "ru"):
             self.window.set_language(language)
-            self.assertNotIn("F =", self.window.stats_label.text())
+            self.assertNotIn(self.window.tr("free_energy") + ":", self.window.stats_label.text())
         self.window.free_energy_title.setChecked(False)
-        self.assertIn("F =", self.window.stats_label.text())
+        self.assertIn(self.window.tr("free_energy") + ":", self.window.stats_label.text())
         self.assertEqual(self.window.free_energy_times, times)
 
     def test_free_energy_clock_stops_on_pause_and_demon_decision(self):
@@ -183,6 +220,75 @@ class InterfaceTests(unittest.TestCase):
         self.window.potential_title.setChecked(False)
         self.window.new_potential()
         self.assertTrue(self.window.potential_title.isChecked())
+
+    def test_vessel_and_plot_data_keep_the_same_width_after_resize(self):
+        w = self.window
+        w.animation_frame()
+        w.show()
+        for size in ((1600, 1000), (800, 600), (2000, 600), (1280, 800)):
+            w.resize(*size)
+            for _ in range(3):
+                self.app.processEvents()
+            # Resizing must also work while paused, before the next rendered frame.
+            view = w.particle_view
+            pm = view.pixmap()
+            with self.subTest(size=size):
+                self.assertEqual(pm.width(), view.contentsRect().width())
+                self.assertEqual(view.height(), view.heightForWidth(view.width()))
+                self.assertAlmostEqual(pm.height(), pm.width() * FIELD_HEIGHT / FIELD_WIDTH, delta=1)
+                self.assertEqual(w.plots_scroll.horizontalScrollBar().maximum(), 0)
+                for plot in (w.potential_plot, w.distribution_plot):
+                    self.assertEqual(plot.width(), view.width())
+                    data = plot.getViewBox().sceneBoundingRect()
+                    self.assertAlmostEqual(data.width(), pm.width(), delta=1)
+                    self.assertAlmostEqual(data.left(), view.contentsRect().left(), delta=1)
+        # Extra height is taken from the plots, while the vessel keeps its shape.
+        w.resize(1280, 600)
+        self.app.processEvents()
+        vessel_height = w.particle_view.height()
+        plot_height = w.potential_plot.height()
+        w.resize(1280, 1000)
+        self.app.processEvents()
+        self.assertEqual(w.particle_view.height(), vessel_height)
+        self.assertGreater(w.potential_plot.height(), plot_height)
+
+    def test_energy_plots_replace_each_other_without_losing_state(self):
+        w = self.window
+        draft = [(0.1, 0.2), (0.5, 0.7)]
+        w.potential_plot.raw_points = draft.copy()
+        history = list(w.free_energy_times)
+        w.free_energy_title.setChecked(True)
+        self.assertTrue(w.potential_plot.isHidden())
+        self.assertFalse(w.free_energy_plot.isHidden())
+        self.assertFalse(w.potential_title.isChecked())
+        w.potential_title.setChecked(True)
+        self.assertFalse(w.potential_plot.isHidden())
+        self.assertTrue(w.free_energy_plot.isHidden())
+        self.assertFalse(w.free_energy_title.isChecked())
+        self.assertEqual(w.potential_plot.raw_points, draft)
+        self.assertEqual(w.free_energy_times, history)
+        w.free_energy_title.setChecked(True)
+        w.new_potential()
+        self.assertFalse(w.potential_plot.isHidden())
+        self.assertTrue(w.free_energy_plot.isHidden())
+
+    def test_statistics_stay_visible_when_settings_scroll(self):
+        w = self.window
+        w.resize(800, 600)
+        w.show()
+        self.app.processEvents()
+        for language in ("en", "ru"):
+            w.set_language(language)
+            self.app.processEvents()
+            position = w.statistics_group.mapTo(w, w.statistics_group.rect().topLeft())
+            w.controls_scroll.verticalScrollBar().setValue(
+                w.controls_scroll.verticalScrollBar().maximum())
+            self.app.processEvents()
+            self.assertEqual(w.statistics_group.mapTo(w, w.statistics_group.rect().topLeft()),
+                             position)
+            self.assertTrue(w.statistics_group.isVisible())
+            self.assertLessEqual(position.y() + w.statistics_group.height(), w.height())
+            self.assertIn(w.tr('com'), w.stats_label.text())
 
     def test_simulation_inside_application_window(self):
         # WebEngine needs a desktop; keep this test focused on the app layout.

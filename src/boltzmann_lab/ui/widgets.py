@@ -1,11 +1,11 @@
 import numpy as np
 import pyqtgraph as pg
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QLabel, QVBoxLayout
+from PyQt6.QtWidgets import QLabel, QSizePolicy, QToolButton, QVBoxLayout
 
-from boltzmann_lab.core.config import POTENTIAL_POINTS
+from boltzmann_lab.core.config import FIELD_HEIGHT, FIELD_WIDTH, POTENTIAL_POINTS
 from boltzmann_lab.ui.theme import PLOT_BACKGROUND, contrast_text_color
 
 
@@ -37,6 +37,107 @@ class PlotLayout(QVBoxLayout):
                 minimum = max(minimum, widget.heightForWidth(inner_width))
             height += minimum
         return height + max(0, len(items) - 1) * max(0, self.spacing())
+
+
+class CollapsiblePlotHeader(QToolButton):
+    """Full heading when collapsed; a caption and small control inside an open plot."""
+
+    def __init__(self, plot, expanded=True):
+        super().__init__(plot)
+        self.plot = plot
+        self._title = ""
+        self.setCheckable(True)
+        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setStyleSheet("""
+            QToolButton {
+                font-size: 22pt; font-weight: 800; color: #0f172a;
+                min-height: 0; padding: 3px 8px;
+            }
+        """)
+
+        self.caption = QLabel(plot.viewport())
+        self.caption.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.caption.setStyleSheet("""
+            QLabel {
+                color: #ffffff; background: rgba(11, 18, 32, 210);
+                font-size: 14pt; font-weight: 700;
+                border: none; border-radius: 4px; padding: 2px 6px;
+            }
+        """)
+        self.collapse_button = QToolButton(plot.viewport())
+        self.collapse_button.setArrowType(Qt.ArrowType.UpArrow)
+        self.collapse_button.setFixedSize(28, 28)
+        self.collapse_button.setStyleSheet("""
+            QToolButton {
+                min-height: 0; min-width: 0; padding: 0;
+                color: #ffffff; background: #1e293b;
+                border: 1px solid #94a3b8; border-radius: 4px;
+            }
+            QToolButton:hover, QToolButton:focus {
+                background: #334155; border-color: #38bdf8;
+            }
+        """)
+        self.collapse_button.clicked.connect(lambda: self.setChecked(False))
+        self.toggled.connect(self._set_expanded)
+        plot.getViewBox().sigResized.connect(self._position_overlay)
+        plot.viewport().installEventFilter(self)
+        self.setChecked(expanded)
+        if not expanded:
+            self._set_expanded(False)
+
+    def setText(self, text):
+        self._title = text
+        self.setToolTip(text)
+        self.setAccessibleName(text)
+        self.caption.setToolTip(text)
+        self._update_header_text()
+        self._position_overlay()
+
+    def text(self):
+        return self._title
+
+    def _update_header_text(self):
+        super().setText(self.fontMetrics().elidedText(
+            self._title, Qt.TextElideMode.ElideRight, max(0, self.width() - 44)))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_header_text()
+
+    def setCollapseText(self, text):
+        description = f"{text}: {self.text()}"
+        self.collapse_button.setToolTip(description)
+        self.collapse_button.setAccessibleName(description)
+
+    def _set_expanded(self, expanded):
+        self.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self.setVisible(not expanded)
+        self.plot.setVisible(expanded)
+        self.caption.setVisible(expanded)
+        self.collapse_button.setVisible(expanded)
+        if expanded:
+            self._position_overlay()
+
+    def _position_overlay(self):
+        # Anchor in the data area so captions never cover axis labels.
+        bounds = self.plot.mapFromScene(self.plot.getViewBox().sceneBoundingRect()).boundingRect()
+        button = self.collapse_button
+        button.move(max(bounds.left(), bounds.right() - button.width() - 6), bounds.top() + 6)
+        available = max(0, button.x() - bounds.left() - 14)
+        text = self.caption.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight,
+                                                   max(0, available - 12))
+        self.caption.setText(text)
+        self.caption.adjustSize()
+        self.caption.resize(min(available, self.caption.width()), self.caption.height())
+        self.caption.move(bounds.left() + 6, bounds.top() + 6)
+        self.caption.raise_()
+        button.raise_()
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            self._position_overlay()
+        return super().eventFilter(watched, event)
 
 
 class ParticleView(QLabel):
@@ -109,6 +210,46 @@ class ParticleView(QLabel):
             return
 
         super().mouseReleaseEvent(event)
+
+class ParticleFieldView(ParticleView):
+    """Reserve the vessel's full aspect ratio before distributing plot heights."""
+
+    def __init__(self):
+        super().__init__()
+        policy = QSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumWidth(160)
+        self._source_pixmap = None
+
+    def setPixmap(self, pixmap):
+        self._source_pixmap = pixmap
+        self._fit_pixmap()
+
+    def _fit_pixmap(self):
+        if self._source_pixmap is not None and not self._source_pixmap.isNull():
+            super().setPixmap(self._source_pixmap.scaledToWidth(
+                max(1, self.contentsRect().width()),
+                Qt.TransformationMode.SmoothTransformation))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_pixmap()
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        border = 2 * self.frameWidth()
+        return round(max(0, width - border) * FIELD_HEIGHT / FIELD_WIDTH) + border
+
+    def minimumSizeHint(self):
+        return QSize(160, self.heightForWidth(160))
+
+    def sizeHint(self):
+        return QSize(FIELD_WIDTH, self.heightForWidth(FIELD_WIDTH))
+
 
 class PresentationPlot(pg.PlotWidget):
     """Large graph labels whose colors follow the actual graph background."""
