@@ -1,6 +1,8 @@
 import numpy as np
 import pygame
 
+from boltzmann_lab.core.physics import NUMBA_OK
+from boltzmann_lab.ui.raster import paint_disks
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtCore import Qt #######################################
 
@@ -146,11 +148,11 @@ class ParticleRendererMixin:
         T = max(sim.temperature, 1e-6)
         reference_speed = 3.0 * np.sqrt(T)
 
-        pxs = (sim.positions[:, 0] * (FIELD_WIDTH / WORLD_W)).astype(int).tolist()
-        pys = (sim.positions[:, 1] * (FIELD_HEIGHT / WORLD_H)).astype(int).tolist()
+        pxs = (sim.positions[:, 0] * (FIELD_WIDTH / WORLD_W)).astype(np.int64)
+        pys = (sim.positions[:, 1] * (FIELD_HEIGHT / WORLD_H)).astype(np.int64)
 
         if sim.demon_mode and len(sim.colors) == sim.n:
-            colors = [DEMON_COLORS[c] for c in sim.particle_color_indices().tolist()]
+            colors = np.asarray(DEMON_COLORS, dtype=np.uint32)[sim.particle_color_indices()]
         else:
             speeds = np.linalg.norm(sim.velocities, axis=1)
             ratio = np.clip(speeds / reference_speed, 0.0, 1.0)
@@ -159,14 +161,12 @@ class ParticleRendererMixin:
             green = np.minimum(255, (180 + 60 * ratio).astype(int))
             blue = np.maximum(0, (255 - 190 * ratio).astype(int))
 
-            colors = list(zip(red.tolist(), green.tolist(), blue.tolist()))
+            colors = np.column_stack((red, green, blue)).astype(np.uint32)
 
         # Games may magnify markers for a projector without changing collision radii.
         radius_px = getattr(self, "particle_draw_radius_px", sim.radius_px)
 
-        for px, py, color in zip(pxs, pys, colors):
-            pygame.draw.circle(surface, color, (px, py), radius_px)
-            pygame.draw.circle(surface, (235, 245, 255), (px, py), radius_px, 1)
+        self._paint_disks(surface, pxs, pys, colors, radius_px)
 
         if self.sim.demon_mode and self.sim.demon_queue:
             i = self.sim.demon_queue[0]
@@ -196,26 +196,10 @@ class ParticleRendererMixin:
         # Pygame Surface -> NumPy -> QImage -> QLabel
         # ----------------------------------------------------
 
-        rgb = pygame.surfarray.array3d(
-            surface
-        )
-
-        # pygame: [x, y, rgb]
-        # Qt:     [y, x, rgb]
-        rgb = np.transpose(
-            rgb,
-            (1, 0, 2),
-        )
-
-        rgb = np.ascontiguousarray(rgb)
-
-        image = QImage(
-            rgb.data,
-            FIELD_WIDTH,
-            FIELD_HEIGHT,
-            FIELD_WIDTH * 3,
-            QImage.Format.Format_RGB888,
-        ).copy()
+        # Convert directly to row-major RGB, without a transposed NumPy copy.
+        rgb = pygame.image.tobytes(surface, "RGB")
+        image = QImage(rgb, FIELD_WIDTH, FIELD_HEIGHT, FIELD_WIDTH * 3,
+                       QImage.Format.Format_RGB888).copy()
 
         pixmap = QPixmap.fromImage(image)
 
@@ -230,6 +214,37 @@ class ParticleRendererMixin:
             pixmap
         )
 
+    def _paint_disks(self, surface, xs, ys, colors, radius):
+        if not NUMBA_OK or surface.get_bitsize() != 32:
+            surface.lock()
+            try:
+                for x, y, color in zip(xs.tolist(), ys.tolist(), colors.tolist()):
+                    pygame.draw.circle(surface, color, (x, y), radius)
+                    pygame.draw.circle(surface, (235, 245, 255), (x, y), radius, 1)
+            finally:
+                surface.unlock()
+            return
+        if getattr(self, "_disk_mask_radius", None) != radius:
+            marker = pygame.Surface((2 * radius + 1, 2 * radius + 1), depth=32)
+            marker.fill(0)
+            pygame.draw.circle(marker, (1, 0, 0), (radius, radius), radius)
+            pygame.draw.circle(marker, (2, 0, 0), (radius, radius), radius, 1)
+            mask = pygame.surfarray.array2d(marker)
+            x, y = np.nonzero(mask)
+            border = mask[x, y] == marker.map_rgb((2, 0, 0))
+            self._disk_mask = ((x - radius).astype(np.int64),
+                               (y - radius).astype(np.int64), border)
+            self._disk_mask_radius = radius
+        shifts = surface.get_shifts()
+        packed = ((colors[:, 0] << shifts[0]) | (colors[:, 1] << shifts[1])
+                  | (colors[:, 2] << shifts[2])).astype(np.uint32)
+        pixels = pygame.surfarray.pixels2d(surface)
+        try:
+            paint_disks(pixels, xs, ys, packed, *self._disk_mask,
+                        surface.map_rgb((235, 245, 255)))
+        finally:
+            del pixels
+
     def _draw_obstacles(self, surface, bx):
         # Тонкая направляющая: за неё удобно хватать перегородку.
         pygame.draw.line(
@@ -238,12 +253,15 @@ class ParticleRendererMixin:
 
         scale = FIELD_HEIGHT / WORLD_H
 
-        for ob in self.sim.obstacles():
-            points = [
-                (int(x * scale), int(y * scale))
-                for x, y in ob.outline(self.sim.barrier_x)
+        obstacles = self.sim.obstacles()
+        key = self.sim._obstacle_key, self.sim.barrier_x
+        if getattr(self, "_obstacle_polygons_key", None) != key:
+            self._obstacle_polygons = [
+                [(int(x * scale), int(y * scale)) for x, y in ob.outline(self.sim.barrier_x)]
+                for ob in obstacles
             ]
-
+            self._obstacle_polygons_key = key
+        for points in self._obstacle_polygons:
             pygame.draw.polygon(surface, (120, 50, 60), points)
             pygame.draw.polygon(surface, (248, 113, 113), points, 2)
 

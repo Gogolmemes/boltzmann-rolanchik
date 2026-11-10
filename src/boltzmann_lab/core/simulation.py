@@ -12,14 +12,20 @@ from boltzmann_lab.core.config import (
     BARRIER_MAX_SPEED,
     BARRIER_RESPONSE,
     MAX_TEMPERATURE,
-    TEMPERATURE_CHECK_INTERVAL
+    DT,
 )
 
 from boltzmann_lab.core.physics import (
     NUMBA_OK,
     collide_numba,
-    Obstacle,
+    Obstacle, energy_totals, kick_drift, finish_kick, outer_walls, stabilize_energy, scatter_collisions,
 )
+
+from boltzmann_lab.core.limits import (
+    PARAMETER_RANGES, MAX_POTENTIAL_SAMPLES, particle_capacity, require_range,
+    validate_parameters, barrier_motion_limits,
+)
+
 
 class TemperatureLimitExceeded(Exception):
     """Превышена допустимая температура симуляции."""
@@ -49,6 +55,12 @@ class BoltzmannSimulation:
     """
 
     def __init__(self):
+        self._scatter_kernel_key = None
+        self._collision_workspace = None
+        self._old_x = np.empty(0)
+        self._validated_configuration = None
+        self._potential_revision = 0
+        self._theory_cache = {}
         self.rng = np.random.default_rng()  # Генератор случайных чисел (для разброса частиц)
 
         self.n = 120  # Начальное количество частиц в симуляции
@@ -115,6 +127,10 @@ class BoltzmannSimulation:
     def set_potential(self, potential): # вызывается каждый раз, когда вы рисуете график потенциальной энергии U(x) мышкой
         # Его задача — взять нарисованную кривую, превратить её в массив чисел, вычислить силы и сохранить всё это в память программы.
         potential = np.asarray(potential, dtype=float)
+        if (potential.ndim != 1 or not 2 <= potential.size <= MAX_POTENTIAL_SAMPLES
+                or not np.isfinite(potential).all()
+                or np.min(potential) < -1e-12 or np.max(potential) > 1.0 + 1e-12):
+            raise ValueError("potential: expected a finite one-dimensional curve in 0..1")
 
         if len(potential) != POTENTIAL_POINTS:
             old_x = np.linspace(0.0, 1.0, len(potential))
@@ -142,6 +158,8 @@ class BoltzmannSimulation:
         )
 
         self.potential_defined = True
+        self._potential_revision += 1
+        self._theory_cache.clear()
 
     def force_x(self, x): # сила — это минус производная потенциальной энергии
         grad = np.interp(
@@ -157,6 +175,9 @@ class BoltzmannSimulation:
     # --------------------------------------------------------
 
     def set_radius_px(self, value):
+        require_range("radius_px", value, PARAMETER_RANGES["radius_px"], integer=True)
+        if self.n > particle_capacity(value):
+            raise ValueError("particle_density: reduce particle count before increasing radius")
         self.radius_px = int(value)
         self.radius = self.radius_px / FIELD_HEIGHT
 
@@ -227,6 +248,7 @@ class BoltzmannSimulation:
         согласно распределению Больцмана.
         """
 
+        validate_parameters(self)
         if equilibrium and self.potential_defined:
             x = self._sample_boltzmann_x(self.n)
         else:
@@ -429,6 +451,23 @@ class BoltzmannSimulation:
 
         pos = self.positions
         vel = self.velocities
+
+        if NUMBA_OK:
+            obstacles = self.obstacles()
+            if self._scatter_kernel_key != self._obstacle_key:
+                geometry = np.zeros((len(obstacles), 8))
+                vertices = np.zeros((len(obstacles), 3, 2))
+                for i, ob in enumerate(obstacles):
+                    ellipse = ob.kind == "ellipse"
+                    geometry[i] = (ob.dx, ob.cy, ob.cs, ob.sn,
+                                   ob.a if ellipse else 0.0, ob.b if ellipse else 0.0,
+                                   ob.bound, float(ellipse))
+                    if not ellipse:
+                        vertices[i] = ob.local
+                self._scatter_kernel_data = geometry, vertices
+                self._scatter_kernel_key = self._obstacle_key
+            scatter_collisions(pos, vel, r, bx, w, *self._scatter_kernel_data)
+            return
 
         for ob in self.obstacles():
             c = ob.center(bx)
@@ -637,9 +676,11 @@ class BoltzmannSimulation:
         """Скорость стенки, которая входит в формулы столкновения."""
         return self.barrier_velocity if self.barrier_does_work else 0.0
 
-    def _move_barrier(self, dt): # функция вызывается каждый кадр (60 раз в секунду) и двигает стенку к тому месту, куда вы навели мышку
+    def _move_barrier(self, dt): # функция вызывается каждый кадр (FPS раз в секунду) и двигает стенку к тому месту, куда вы навели мышку
         """Плавно двигает стенку к цели и запоминает её скорость."""
-        goal = float(np.clip(self.barrier_goal, BARRIER_MIN, BARRIER_MAX)) # куда вы хотите поставить стенку
+        minimum, maximum = barrier_motion_limits(self)
+        goal = float(np.clip(self.barrier_goal, minimum, maximum))
+        self.barrier_goal = goal # куда вы хотите поставить стенку
 
         move = (goal - self.barrier_fraction) * WORLD_W # это расстояние, которое стенке осталось проехать до цели
         move *= min(1.0, dt * BARRIER_RESPONSE) # Затем мы умножаем это расстояние на коэффициент BARRIER_RESPONSE (скорость реакции)
@@ -738,6 +779,11 @@ class BoltzmannSimulation:
         if len(self.positions) == 0:
             return
 
+        if self.positions.shape != self.velocities.shape:
+            raise ValueError("positions and velocities must have matching shapes")
+        if NUMBA_OK:
+            outer_walls(self.positions, self.velocities, self.radius, WORLD_W, WORLD_H)
+            return
         r = self.radius
 
         # Левая стенка
@@ -791,7 +837,17 @@ class BoltzmannSimulation:
             self._resolve_collisions_python()
             return
 
-        collide_numba(pos, vel, self.radius, WORLD_W, WORLD_H)
+        cell = 2.0 * self.radius * 1.05
+        cells = (int(WORLD_W / cell) + 3) * (int(WORLD_H / cell) + 3)
+        count = len(pos)
+        if pos.shape != vel.shape:
+            raise ValueError("positions and velocities must have matching shapes")
+        key = (count, cells)
+        if self._collision_workspace is None or self._collision_workspace[0] != key:
+            self._collision_workspace = (key, np.empty(cells, dtype=np.int64),
+                                         *(np.empty(count, dtype=np.int64) for _ in range(3)))
+        collide_numba(pos, vel, self.radius, WORLD_W, WORLD_H,
+                      *self._collision_workspace[1:])
 
         self._apply_outer_walls() # возвращает их в рамки
         self._enforce_barrier()
@@ -917,12 +973,18 @@ class BoltzmannSimulation:
     # Ланжевеновская динамика (статистическая симуляция, но на практике он заменил сложные силы трения и шума на более простые и быстрые упругие столкновения)
     # --------------------------------------------------------
 
-    def step(self, dt): # вызывается 60 раз в секунду (каждый кадр анимации) и описывает, как вся система делает один маленький шаг во времени
+    def step(self, dt): # вызывается по таймеру FPS (каждый кадр анимации) и описывает, как вся система делает один маленький шаг во времени
         if not self.potential_defined:
             return
 
         # Контролируем K + U, а не температуру: обмен между K и U остаётся.
-        energy_before = self.mechanical_energy()
+        if not np.isfinite(dt) or not 0.0 < dt <= DT * (1.0 + 1e-10):
+            raise ValueError("dt: expected a positive integration step no larger than DT")
+        self._validate_configuration()
+        accelerated = (NUMBA_OK and self.positions.dtype == np.float64
+                       and self.velocities.dtype == np.float64
+                       and self.positions.flags.c_contiguous and self.velocities.flags.c_contiguous)
+        energy_before = 0.0 if accelerated else self.mechanical_energy()
         old_bx = self.barrier_x # Движение перегородки
         if self.demon_mode:
             # Линия неподвижна и ставится строго по координате.
@@ -933,11 +995,17 @@ class BoltzmannSimulation:
         else:
             self._move_barrier(dt)
 
-        force = self.force_x(self.positions[:, 0]) # Программа смотрит на график энергии и вычисляет силу (force), которая действует на каждую частицу
-        self.velocities[:, 0] += 0.5 * dt * force
-
-        old_x = self.positions[:, 0].copy()
-        self.positions += self.velocities * dt
+        if accelerated:
+            if self._old_x.shape != (self.n,):
+                self._old_x = np.empty(self.n)
+            old_x = self._old_x
+            energy_before = kick_drift(self.positions, self.velocities, old_x,
+                                       self.potential, self.gradient, self.energy_scale, WORLD_W, dt)
+        else:
+            force = self.force_x(self.positions[:, 0])
+            self.velocities[:, 0] += 0.5 * dt * force
+            old_x = self.positions[:, 0].copy()
+            self.positions += self.velocities * dt
 
         self._apply_outer_walls()
         moving_wall = self.barrier_mode in (1, 2, 4) and self.collision_wall_velocity() != 0.0
@@ -945,22 +1013,43 @@ class BoltzmannSimulation:
         self._barrier_collision(old_x, old_bx)
         wall_work = self.kinetic_energy() - kinetic_before_wall if moving_wall else 0.0
 
-        force_new = self.force_x(self.positions[:, 0]) # снова считаем силу, но уже в новых координатах
-        self.velocities[:, 0] += 0.5 * dt * force_new
+        if accelerated:
+            finish_kick(self.positions, self.velocities, self.gradient, self.energy_scale, WORLD_W, dt)
+        else:
+            self.velocities[:, 0] += 0.5 * dt * self.force_x(self.positions[:, 0])
 
         # Раздвигание перекрывающихся дисков тоже меняет U(x).
         kinetic_before_collisions = self.kinetic_energy() if moving_wall else 0.0
         self._resolve_collisions()
         if moving_wall:
             wall_work += self.kinetic_energy() - kinetic_before_collisions
-        self._stabilize_energy(energy_before + wall_work)
-        self.check_temperature_limit()
+        if accelerated:
+            temperature = stabilize_energy(self.positions, self.velocities, self.potential,
+                                           self.energy_scale, WORLD_W, energy_before + wall_work)
+            self.check_temperature_limit(temperature)
+        else:
+            self._stabilize_energy(energy_before + wall_work)
+            self.check_temperature_limit()
+
+    def _validate_configuration(self):
+        if self.positions.shape != (self.n, 2) or self.velocities.shape != (self.n, 2):
+            raise ValueError("particle arrays do not match the particle count")
+        signature = tuple(getattr(self, name) for name in PARAMETER_RANGES)
+        signature += (tuple(self.demon_pass), tuple(self.demon_else),
+                      tuple(self.demon_speed_pass), tuple(self.demon_speed_else),
+                      self.demon_rule_mode, self.demon_color_mode)
+        if signature != self._validated_configuration:
+            validate_parameters(self)
+            self._validated_configuration = signature
 
     def kinetic_energy(self):
         return float(0.5 * np.sum(self.velocities ** 2))
 
     def mechanical_energy(self):
         """Полная механическая энергия газа, массы молекул равны единице."""
+        if NUMBA_OK and self.potential_defined:
+            k, u = energy_totals(self.positions, self.velocities, self.potential, self.energy_scale, WORLD_W)
+            return float(k + u)
         return self.kinetic_energy() + self.n * self.mean_potential_energy()
 
     def _stabilize_energy(self, target_energy):
@@ -1007,6 +1096,9 @@ class BoltzmannSimulation:
         return probabilities, edges
 
     def theoretical_distribution(self, bins=HIST_BINS): # рисует красную линию (теорию Больцмана) на нижнем графике.
+        key = (bins, self._potential_revision, self.temperature, self.energy_scale)
+        if key in self._theory_cache:
+            return self._theory_cache[key]
         centers = (
             np.arange(bins) + 0.5
         ) / bins
@@ -1041,7 +1133,11 @@ class BoltzmannSimulation:
             weights[:] = 1.0
             total = np.sum(weights)
 
-        return centers, weights / total
+        result = centers, weights / total
+        for array in result:
+            array.setflags(write=False)
+        self._theory_cache = {key: result}
+        return result
 
     def center_of_mass(self):
         if self.n == 0:
@@ -1052,7 +1148,7 @@ class BoltzmannSimulation:
             / WORLD_W
         )
 
-    def entropy(self):
+    def entropy(self, bins=HIST_BINS):
         """
         Дискретная крупнозернистая энтропия:
             S = -sum p_i ln(p_i)
@@ -1060,7 +1156,7 @@ class BoltzmannSimulation:
         k_B = 1.
         """
 
-        p, _ = self.histogram()
+        p, _ = self.histogram(bins=bins)
 
         p = p[p > 0.0]
 
@@ -1085,6 +1181,9 @@ class BoltzmannSimulation:
             return 0.0
         
         # Находим энергию U(x) для каждой частицы по её координате X
+        if NUMBA_OK:
+            return float(energy_totals(self.positions, self.velocities, self.potential,
+                                      self.energy_scale, WORLD_W)[1] / self.n)
         energies = np.interp(
             self.positions[:, 0],
             self.potential_x,
@@ -1092,19 +1191,20 @@ class BoltzmannSimulation:
         )
         return float(np.mean(energies))
 
-    def free_energy(self):
+    def free_energy(self, bins=HIST_BINS):
         """Вычисляет свободную энергию Гельмгольца: F = <U> - T*S."""
         if self.n == 0:
             return 0.0
             
         mean_u = self.mean_potential_energy()
-        entropy = self.entropy()
+        entropy = self.entropy(bins=bins)
         temp = self.temperature
         
         return float(mean_u - temp * entropy)
 
-    def check_temperature_limit(self):
-        temperature = self.effective_temperature()
+    def check_temperature_limit(self, temperature=None):
+        if temperature is None:
+            temperature = self.effective_temperature()
 
         if not np.isfinite(temperature):
             raise TemperatureLimitExceeded(
@@ -1117,3 +1217,19 @@ class BoltzmannSimulation:
                 temperature,
                 MAX_TEMPERATURE,
             )
+    def statistics(self, bins=HIST_BINS):
+        """One histogram and one energy pass for all readings at this instant."""
+        probabilities, _ = self.histogram(bins)
+        positive = probabilities[probabilities > 0.0]
+        entropy = float(-np.sum(positive * np.log(positive)))
+        if NUMBA_OK:
+            kinetic, potential = energy_totals(self.positions, self.velocities, self.potential,
+                                                self.energy_scale, WORLD_W)
+            mean_u = potential / self.n if self.potential_defined else 0.0
+            temperature = kinetic / self.n
+        else:
+            mean_u = self.mean_potential_energy()
+            temperature = self.effective_temperature()
+        # F retains the original fixed 40-bin definition, independent of display bins.
+        free_entropy = entropy if bins == HIST_BINS else self.entropy()
+        return probabilities, entropy, temperature, mean_u, mean_u - self.temperature * free_entropy

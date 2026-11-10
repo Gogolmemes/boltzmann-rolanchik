@@ -12,6 +12,9 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
 )
 from boltzmann_lab.core.config import DT, FPS, SUBSTEPS, FIELD_WIDTH, FIELD_HEIGHT, WORLD_W
+from boltzmann_lab.core.limits import (
+    GAME_COUNT_RANGE, GAME_TEMPERATURE_RANGE, GAME_DURATION_RANGE, GAME_HEIGHT_RANGE, PLAYBACK_RANGE,
+)
 from boltzmann_lab.core.memory_game import MemoryGame, preset_potential
 from boltzmann_lab.core.simulation import TemperatureLimitExceeded
 from boltzmann_lab.ui.renderer import ParticleRendererMixin
@@ -105,26 +108,26 @@ class MemoryGameWindow(ParticleRendererMixin, QMainWindow):
         form.addRow(self.origin_hint)
         self.temperature_label = QLabel()
         self.temperature_spin = QDoubleSpinBox()
-        self.temperature_spin.setRange(0.01, 10)
+        self.temperature_spin.setRange(*GAME_TEMPERATURE_RANGE)
         self.temperature_spin.setDecimals(2)
         self.temperature_spin.setSingleStep(0.1)
         self.temperature_spin.setValue(0.3)
         form.addRow(self.temperature_label, self.temperature_spin)
         self.height_label = QLabel()
         self.height_spin = QDoubleSpinBox()
-        self.height_spin.setRange(0.1, 12)
+        self.height_spin.setRange(*GAME_HEIGHT_RANGE)
         self.height_spin.setSingleStep(0.25)
         self.height_spin.setValue(1)
         form.addRow(self.height_label, self.height_spin)
         self.delay_label = QLabel()
         self.delay_spin = QDoubleSpinBox()
-        self.delay_spin.setRange(0.1, 120)
+        self.delay_spin.setRange(*GAME_DURATION_RANGE)
         self.delay_spin.setSingleStep(1)
         self.delay_spin.setValue(5)
         form.addRow(self.delay_label, self.delay_spin)
         self.count_label = QLabel()
         self.count_spin = QSpinBox()
-        self.count_spin.setRange(10, 100)
+        self.count_spin.setRange(*GAME_COUNT_RANGE)
         self.count_spin.setValue(60)
         form.addRow(self.count_label, self.count_spin)
         left.addWidget(self.config_group)
@@ -134,7 +137,7 @@ class MemoryGameWindow(ParticleRendererMixin, QMainWindow):
         speed_row = QFormLayout()
         self.speed_label = QLabel()
         self.speed_spin = QDoubleSpinBox()
-        self.speed_spin.setRange(0.25, 8)
+        self.speed_spin.setRange(*PLAYBACK_RANGE)
         self.speed_spin.setValue(1)
         self.speed_spin.setSingleStep(0.25)
         self.speed_spin.setSuffix(" ×")
@@ -401,8 +404,6 @@ class MemoryGameWindow(ParticleRendererMixin, QMainWindow):
                 self.update_view()
         self.progress.setValue(round(1000 * self.game.elapsed / self.game.duration))
         self.progress.setFormat(self.tr("elapsed").format(elapsed=self.game.elapsed, duration=self.game.duration))
-        if self.game.phase in ("guess", "result"):
-            self.render_particle_field()
 
     def submit_answer(self, index):
         if self.game.phase != "guess":

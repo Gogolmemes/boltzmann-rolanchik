@@ -2,7 +2,11 @@
 from collections import deque
 from dataclasses import dataclass
 import numpy as np
-from boltzmann_lab.core.config import POTENTIAL_POINTS, WORLD_H, WORLD_W
+from boltzmann_lab.core.config import DT, POTENTIAL_POINTS, WORLD_H, WORLD_W
+from boltzmann_lab.core.limits import (
+    GAME_COUNT_RANGE, GAME_TEMPERATURE_RANGE, GAME_DURATION_RANGE, GAME_HEIGHT_RANGE,
+    particle_capacity, require_range,
+)
 from boltzmann_lab.core.simulation import BoltzmannSimulation
 
 @dataclass(frozen=True)
@@ -139,14 +143,20 @@ class MemoryGame:
             raise ValueError("round_active")
         if not self.wells:
             raise ValueError("need_wells")
-        if (not np.isfinite([temperature, duration, height]).all()
-                or not 0.01 <= temperature <= 10 or not 0.1 <= duration <= 120
-                or not 0.1 <= height <= 12 or not 2 <= count <= 200):
-            raise ValueError("bad_parameters")
+        try:
+            require_range("temperature", temperature, GAME_TEMPERATURE_RANGE)
+            require_range("duration", duration, GAME_DURATION_RANGE)
+            require_range("height", height, GAME_HEIGHT_RANGE)
+            require_range("count", count, GAME_COUNT_RANGE, integer=True)
+        except ValueError:
+            raise ValueError("bad_parameters") from None
         if origin is None:
             origin = int(self.sim.rng.integers(len(self.wells)))
         if not isinstance(origin, (int, np.integer)) or not 0 <= origin < len(self.wells):
             raise ValueError("bad_choice")
+        well = self.wells[origin]
+        if count > particle_capacity(2, well.right - well.left):
+            raise ValueError("packing_failed")
         self.sim.barrier_mode = 0
         self.sim.set_radius_px(2)
         self.sim.n = int(count)
@@ -167,8 +177,9 @@ class MemoryGame:
             return
         if not np.isfinite(dt) or dt <= 0:
             raise ValueError("bad_parameters")
-        step = min(dt, self.duration - self.elapsed)
-        if step > 0:
+        target = min(self.duration, self.elapsed + dt)
+        while target - self.elapsed > 1e-12:
+            step = min(DT, target - self.elapsed)
             self.sim.step(step)
             self.elapsed += step
         if self.duration - self.elapsed < 1e-10:
@@ -192,4 +203,4 @@ class MemoryGame:
         self.streak = self.streak + 1 if result.correct else 0
         self.chance_sum += 1 / len(self.wells)
         self.phase = "result"
-        return result
+        return result

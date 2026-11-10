@@ -39,6 +39,10 @@ from boltzmann_lab.ui.widgets import (  # Импорт виджетов (гра�
     fit_window_to_screen,
 )
 
+from boltzmann_lab.core.limits import (
+    PARAMETER_RANGES, PLAYBACK_RANGE, MAX_SCATTER_ROW_FRACTION,
+    particle_capacity, radius_capacity, barrier_motion_limits,
+)
 from boltzmann_lab.ui.theme import DEMON_TEXT_COLORS, presentation_document
 from boltzmann_lab.ui.renderer import ParticleRendererMixin  # Импорт "художника"
 
@@ -122,6 +126,7 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         self._free_energy_sample_interval = self.FREE_ENERGY_SAMPLE_INTERVAL
         self._next_free_energy_sample = 0.0
         self._free_energy_dirty = False
+        self._field_dirty = True
         self.frame_counter = 0  # Счетчик кадров (для обновления графиков)
 
         # Pygame Surface для рисования в памяти
@@ -138,12 +143,14 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         fit_window_to_screen(self)
         self._start_default_state()  # Стартовое состояние: одна яма, движение
 
+        self._update_parameter_limits()
         self.timer = QTimer(self)  # Таймер для анимации
         self.timer.timeout.connect(self.animation_frame)  # Что делать по таймеру
         self.timer.start(round(1000 / FPS))  # Запуск с частотой FPS
 
     def barrier_dragged(self, fraction):  # Вызывается, когда мышку тащат по перегородке
-        fraction = float(np.clip(fraction, BARRIER_MIN, BARRIER_MAX))  # Ограничение позиции
+        minimum, maximum = barrier_motion_limits(self.sim)
+        fraction = float(np.clip(fraction, minimum, maximum))  # Ограничение позиции
         self.sim.barrier_goal = fraction  # Запоминаем новую цель для перегородки
 
         self.barrier_position_spin.blockSignals(True)  # Обновляем спинбокс без вызова сигналов
@@ -226,21 +233,21 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
 
         simulation_form = QFormLayout()
         self.particles_spin = QSpinBox()
-        self.particles_spin.setRange(1, 10000)
+        self.particles_spin.setRange(*PARAMETER_RANGES["n"])
         self.particles_spin.setValue(START_PARTICLES)
 
         self.radius_spin = QSpinBox()
-        self.radius_spin.setRange(1, 5)
+        self.radius_spin.setRange(*PARAMETER_RANGES["radius_px"])
         self.radius_spin.setValue(4)
 
         self.temperature_spin = QDoubleSpinBox()
-        self.temperature_spin.setRange(0.0, 10.00)
+        self.temperature_spin.setRange(*PARAMETER_RANGES["temperature"])
         self.temperature_spin.setDecimals(2)
         self.temperature_spin.setSingleStep(0.05)
         self.temperature_spin.setValue(START_TEMPERATURE)
 
         self.energy_spin = QDoubleSpinBox()
-        self.energy_spin.setRange(0.0, 12.0)
+        self.energy_spin.setRange(*PARAMETER_RANGES["energy_scale"])
         self.energy_spin.setDecimals(2)
         self.energy_spin.setSingleStep(0.25)
         self.energy_spin.setValue(5.0)
@@ -256,12 +263,15 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         simulation_form.addRow(self.energy_label, self.energy_spin)
         self.playback_speed_label = QLabel()
         self.playback_speed_spin = QDoubleSpinBox()
-        self.playback_speed_spin.setRange(0.05, 8.0)
+        self.playback_speed_spin.setRange(*PLAYBACK_RANGE)
         self.playback_speed_spin.setDecimals(2)
         self.playback_speed_spin.setSingleStep(0.25)
         self.playback_speed_spin.setValue(1.0)
         self.playback_speed_spin.setSuffix(" ×")
         simulation_form.addRow(self.playback_speed_label, self.playback_speed_spin)
+        for spin in (self.particles_spin, self.radius_spin, self.temperature_spin,
+                     self.energy_spin, self.playback_speed_spin):
+            spin.setKeyboardTracking(False)
         simulation_layout.addLayout(simulation_form)
         self.controls_layout.addWidget(self.simulation_group)
 
@@ -271,13 +281,13 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         self.barrier_combo = QComboBox()
         self.barrier_combo.addItems(["", "", "", "", ""])
         self.barrier_position_spin = QDoubleSpinBox()
-        self.barrier_position_spin.setRange(0.10, 0.90)
+        self.barrier_position_spin.setRange(*PARAMETER_RANGES["barrier_goal"])
         self.barrier_position_spin.setDecimals(3)
         self.barrier_position_spin.setSingleStep(0.001)
         self.barrier_position_spin.setValue(0.50)
 
         self.pore_spin = QSpinBox()
-        self.pore_spin.setRange(4, 100)
+        self.pore_spin.setRange(*PARAMETER_RANGES["pore_px"])
         self.pore_spin.setValue(26)
 
         self.barrier_type_label = QLabel()
@@ -288,16 +298,16 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         self.scatter_shape_combo = QComboBox()
         self.scatter_shape_combo.addItems(["", "", "", "", "", ""])
         self.scatter_count_spin = QSpinBox()
-        self.scatter_count_spin.setRange(1, 8)
+        self.scatter_count_spin.setRange(*PARAMETER_RANGES["scatter_count"])
         self.scatter_count_spin.setValue(3)
         self.scatter_size_spin = QSpinBox()
-        self.scatter_size_spin.setRange(4, 40)
+        self.scatter_size_spin.setRange(*PARAMETER_RANGES["scatter_size_px"])
         self.scatter_size_spin.setValue(16)
         self.scatter_columns_spin = QSpinBox()
-        self.scatter_columns_spin.setRange(1, 3)
+        self.scatter_columns_spin.setRange(*PARAMETER_RANGES["scatter_columns"])
         self.scatter_columns_spin.setValue(1)
         self.scatter_angle_spin = QSpinBox()
-        self.scatter_angle_spin.setRange(0, 359)
+        self.scatter_angle_spin.setRange(*PARAMETER_RANGES["scatter_angle"])
         self.scatter_angle_spin.setSingleStep(15)
         self.scatter_angle_spin.setWrapping(True)
 
@@ -355,7 +365,7 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         demon_form.addRow(self.demon_coloring_label, self.demon_coloring_combo)
         self.demon_color_threshold_label = QLabel()
         self.demon_color_threshold_spin = QDoubleSpinBox()
-        self.demon_color_threshold_spin.setRange(0.0, 1000.0)
+        self.demon_color_threshold_spin.setRange(*PARAMETER_RANGES["demon_color_threshold"])
         self.demon_color_threshold_spin.setDecimals(3)
         self.demon_color_threshold_spin.setSingleStep(0.1)
         self.demon_color_threshold_spin.setValue(1.0)
@@ -369,7 +379,7 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         demon_form.addRow(self.demon_rules_label, self.demon_rules_combo)
         self.demon_speed_threshold_label = QLabel()
         self.demon_speed_threshold_spin = QDoubleSpinBox()
-        self.demon_speed_threshold_spin.setRange(0.0, 1000.0)
+        self.demon_speed_threshold_spin.setRange(*PARAMETER_RANGES["demon_speed_threshold"])
         self.demon_speed_threshold_spin.setDecimals(3)
         self.demon_speed_threshold_spin.setSingleStep(0.1)
         self.demon_speed_threshold_spin.setValue(1.0)
@@ -393,7 +403,7 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
             self.speed_else_combos.append(else_combo)
         self.demon_colors_label = QLabel()
         self.demon_colors_spin = QSpinBox()
-        self.demon_colors_spin.setRange(1, 3)
+        self.demon_colors_spin.setRange(*PARAMETER_RANGES["color_count"])
         self.demon_colors_spin.setValue(2)
         demon_form.addRow(self.demon_colors_label, self.demon_colors_spin)
 
@@ -823,6 +833,40 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         self.update_status()
         self.update_statistics()
 
+        self._update_parameter_limits()
+
+    def _update_parameter_limits(self):
+        """Apply the same fixed geometric domain on every computer."""
+        maxima = (
+            (self.particles_spin, particle_capacity(self.radius_spin.value())),
+            (self.radius_spin, radius_capacity(self.particles_spin.value())),
+            (self.scatter_size_spin, min(
+                PARAMETER_RANGES["scatter_size_px"][1],
+                int(FIELD_HEIGHT * MAX_SCATTER_ROW_FRACTION / self.scatter_count_spin.value()))),
+            (self.scatter_count_spin, min(
+                PARAMETER_RANGES["scatter_count"][1],
+                int(FIELD_HEIGHT * MAX_SCATTER_ROW_FRACTION / self.scatter_size_spin.value()))),
+        )
+        for widget, maximum in maxima:
+            if widget.maximum() != maximum:
+                widget.setMaximum(maximum)
+
+        minimum, maximum = barrier_motion_limits(self.sim)
+        # Round inward to the position control's displayed precision.
+        minimum = math.ceil(minimum * 1000 - 1e-9) / 1000
+        maximum = math.floor(maximum * 1000 + 1e-9) / 1000
+        position = self.barrier_position_spin
+        previous = position.blockSignals(True)
+        try:
+            if position.minimum() != minimum or position.maximum() != maximum:
+                position.setRange(minimum, maximum)
+            position.setValue(self.sim.barrier_goal)
+            if not minimum <= self.sim.barrier_goal <= maximum:
+                self.sim.barrier_goal = position.value()
+                self._field_dirty = True
+        finally:
+            position.blockSignals(previous)
+
     def _start_default_state(self):  # Сразу после запуска: готовый график, частицы в движении
         self.parameters_changed()  # переносим температуру, энергию и т.д. в симуляцию
         self.sim.n = self.particles_spin.value()
@@ -835,6 +879,7 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         self.update_statistics()
 
     def new_potential(self):  # Начать рисовать новый график с нуля
+        self._field_dirty = True
         self._bg_surface = None
         self.running = False
         self.potential_defined = False
@@ -846,6 +891,7 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         self.update_status()
 
     def clear_potential(self):  # Полностью очистить график
+        self._field_dirty = True
         self._bg_surface = None
         self.running = False
         self.potential_defined = False
@@ -890,6 +936,8 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
     def set_new_potential(self, potential):  # Установить новый график в симуляцию
         self._bg_surface = None  # Сбрасываем кэш фона
         self.sim.set_potential(potential)
+        self._field_dirty = True
+        self._update_parameter_limits()
         self.potential_defined = True
         self.potential_plot.show_applied(potential)
         self._reset_free_energy_history()
@@ -899,6 +947,7 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         self.update_distribution()
 
     def parameters_changed(self, *_):  # Вызывается при изменении любого ползунка
+        self._field_dirty = True
         old_temperature = self.sim.temperature
         old_energy_scale = self.sim.energy_scale
         self.sim.temperature = self.temperature_spin.value()
@@ -907,7 +956,7 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         old_mode = self.sim.barrier_mode
         old_barrier = self.sim.barrier_fraction
         self.sim.barrier_mode = 5 if demon else self.barrier_combo.currentIndex()
-        self.sim.barrier_goal = self.barrier_position_spin.value()
+        requested_goal = self.barrier_position_spin.value()
         self.sim.pore_px = self.pore_spin.value()
         self.sim.scatter_shape = self.scatter_shape_combo.currentIndex()
         self.sim.scatter_count = self.scatter_count_spin.value()
@@ -925,6 +974,8 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         self.sim.demon_color_mode = "speed" if self.demon_coloring_combo.currentIndex() == 1 else "random"
         self.sim.demon_speed_threshold = self.demon_speed_threshold_spin.value()
         self.sim.demon_color_threshold = self.demon_color_threshold_spin.value()
+        minimum, maximum = barrier_motion_limits(self.sim)
+        self.sim.barrier_goal = float(np.clip(requested_goal, minimum, maximum))
         if demon:
             self.sim.barrier_fraction = float(np.clip(self.sim.barrier_goal, BARRIER_MIN, BARRIER_MAX))
             if old_mode != 5 or old_barrier != self.sim.barrier_fraction:
@@ -936,6 +987,8 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         self.update_distribution()
         if old_temperature != self.sim.temperature or old_energy_scale != self.sim.energy_scale:
             self._reset_free_energy_history()
+
+        self._update_parameter_limits()
 
     def update_barrier_controls(self):  # Скрывает/показывает настройки в зависимости от режима
         demon = self.mode_combo.currentIndex() == 1
@@ -972,21 +1025,29 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
             self.else_combos[k].setVisible(visible)
 
     def particle_count_changed(self, value):  # Изменение количества частиц
+        self._field_dirty = True
         self.sim.n = int(value)
         self.bins = bin_count(self.sim.n)
         self.sim.reset_particles(equilibrium=self.potential_defined)
+        self._update_parameter_limits()
         self._reset_free_energy_history()
         self.update_distribution()
 
+        self._update_parameter_limits()
+
     def radius_changed(self, value):  # Изменение радиуса частиц
+        self._field_dirty = True
         self.sim.set_radius_px(value)
         for _ in range(5):
             self.sim._resolve_collisions()
+
+        self._update_parameter_limits()
 
     def reset_particles(self):  # Кнопка "Распределить заново"
         self.parameters_changed()
         self.sim.n = self.particles_spin.value()
         self.sim.reset_particles(equilibrium=self.potential_defined)
+        self._update_parameter_limits()
         self._reset_free_energy_history()
         self.update_distribution()
 
@@ -1029,7 +1090,10 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         self._reset_free_energy_history()
         self.render_particle_field()
 
-    def animation_frame(self):  # Главный цикл анимации (вызывается 60 раз в секунду)
+    def animation_frame(self):  # Главный цикл анимации (вызывается по таймеру FPS)
+        self._update_parameter_limits()
+        active = self.running and self.potential_defined and not self.sim.demon_queue
+        dirty = self._field_dirty
         if self.running and self.potential_defined:
             # Темп меняет модельное время за кадр; шаг интегратора не превышает DT.
             speed = self.playback_speed_spin.value()
@@ -1046,11 +1110,16 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
                     self.handle_temperature_limit(error)
                     return
         else:
+            dirty |= self.sim.barrier_fraction != self.sim.barrier_goal
             self.sim.barrier_fraction = float(np.clip(self.sim.barrier_goal, BARRIER_MIN, BARRIER_MAX))
             self.sim.barrier_velocity = 0.0
 
+        self.barrier_position_spin.blockSignals(True)
+        self.barrier_position_spin.setValue(self.sim.barrier_goal)
+        self.barrier_position_spin.blockSignals(False)
         queue_len = len(self.sim.demon_queue)
         if queue_len != self._last_queue_len:
+            dirty = True
             self._last_queue_len = queue_len
             self.update_demon_panel()
 
@@ -1059,18 +1128,24 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
             if self.sim.barrier_mode not in (0, 5)
             else None
         )
-        self.render_particle_field()  # Рисуем поле с частицами
+        if active or dirty:
+            self.render_particle_field()
+            self._field_dirty = False
         self.frame_counter += 1
-        if self.frame_counter % 5 == 0:  # Обновляем графики не каждый кадр, а реже (для скорости)
-            self.update_distribution()
-            self.update_statistics()
+        if dirty or (active and self.frame_counter % 3 == 0):
+            snapshot = self.sim.statistics(bins=self.bins)
+            if self.distribution_title.isChecked():
+                self.update_distribution(snapshot[0])
+            self.update_statistics(snapshot)
             self._update_free_energy_plot()
 
-    def update_distribution(self):  # Обновление нижнего графика (гистограмма и теория)
+    def update_distribution(self, probabilities=None):  # Обновление нижнего графика (гистограмма и теория)
         if not self.potential_defined:
             return
         bins = self.bins
-        experimental, _ = self.sim.histogram(bins=bins)
+        if probabilities is None:
+            probabilities, _ = self.sim.histogram(bins=bins)
+        experimental = probabilities
         centers = (np.arange(bins) + 0.5) / bins
 
         # Теория считается на плотной сетке THEORY_POINTS, а не на центрах бинов,
@@ -1102,15 +1177,11 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         )
         self.theory_curve.setData([], [])
 
-    def update_statistics(self):  # Обновление текста внизу (центр масс, энтропия, температура)
+    def update_statistics(self, snapshot=None):  # Обновление текста внизу (центр масс, энтропия, температура)
         com = self.sim.center_of_mass()
-        p, _ = self.sim.histogram(bins=self.bins)
-        p = p[p > 0.0]
-        entropy = float(-np.sum(p * np.log(p))) if len(p) else 0.0
-        temp = self.sim.effective_temperature()
-
-        mean_u = self.sim.mean_potential_energy()
-        free_f = self.sim.free_energy()
+        if snapshot is None:
+            snapshot = self.sim.statistics(bins=self.bins)
+        _, entropy, temp, mean_u, free_f = snapshot
 
         text_pack = DIST_TEXT[self.language]
         rows = [
@@ -1136,7 +1207,7 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
 
     def closeEvent(self, event):  # При закрытии окна
         if hasattr(self, "timer"):
-            self.timer.stop()
+            self.shutdown()
         pygame.quit()
         event.accept()
 
@@ -1146,16 +1217,19 @@ class MainWindow(ParticleRendererMixin, QMainWindow):
         self.parameters_changed()
 
     def demon_colors_changed(self, value):  # Изменение количества цветов у Демона
+        self._field_dirty = True
         self.sim.color_count = int(value)
         self.sim.recolor()
         self.update_barrier_controls()
         self.update_demon_panel()
 
     def demon_recolor(self):  # Перекрасить частицы заново
+        self._field_dirty = True
         self.sim.recolor()
         self.update_demon_panel()
 
     def demon_decide(self, let_pass):  # Решение Демона (Пропустить/Отразить)
+        self._field_dirty = True
         if not (self.sim.demon_mode and self.sim.demon_queue):
             return
         self.sim.demon_resolve(let_pass)
